@@ -71,7 +71,7 @@ public abstract class AbstractStorage
 			screens.clear();
 		}
 	}
-	
+
 	public final AbstractScreen findScreen(final Class<? extends AbstractScreen> screenClass){
 		if(screenClass != null){
 			synchronized(screensLock){
@@ -81,7 +81,7 @@ public abstract class AbstractStorage
 							return screen;
 						}
 					}
-				}	
+				}
 			}
 		}
 		return null;
@@ -92,9 +92,12 @@ public abstract class AbstractStorage
 		if(vertex == null){
 			block = true;
 		}else{
+            System.out.println("==putVertextoStorage=="+vertex.getClass().getName());
+            // check if the vertex is blocked by any screen
 			synchronized(screensLock){
 				for(final AbstractScreen screen : screens){
 					if(screen.blockVertex(vertex)){
+                        System.out.println("==screen"+screen.getClass().getName()+"blockVertex=="+screen.getClass().getName());
 						block = true;
 						break;
 					}
@@ -322,9 +325,9 @@ public abstract class AbstractStorage
     public abstract boolean storeVertex(AbstractVertex incomingVertex);
 
     public abstract Object executeQuery(String query);
-    
+
     public QueryInstructionExecutor getQueryInstructionExecutor(){
     	throw new RuntimeException("Storage does not support querying!");
     }
-    
+
 }

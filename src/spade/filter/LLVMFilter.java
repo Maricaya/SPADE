@@ -61,7 +61,7 @@ public class LLVMFilter extends AbstractFilter {
 
             String[] tokens = arguments.split("\\s+");
             BufferedReader graphReader = new BufferedReader(new FileReader(tokens[0]));
-	    System.out.println("tokens0 :" + tokens[0]);	
+	    System.out.println("tokens0 :" + tokens[0]);
             String line;
             Pattern nodeDef = Pattern.compile("([^ \t]+) .*label=\"[{]?([^{}]*)[}]?\".*;"); // Format for node definition in DOT file
             Pattern edgeDef = Pattern.compile("([^ \t]+) -> ([^ \t]+);"); // Format for edge definition in DOT file
@@ -82,12 +82,12 @@ public class LLVMFilter extends AbstractFilter {
             }
             graphReader.close();
 
-            ArrayList<String> traceFunctions = new ArrayList<>();	    
+            ArrayList<String> traceFunctions = new ArrayList<>();
 	    BufferedReader functionFile = new BufferedReader(new FileReader(tokens[1]));
-	
+
 	    String functionName;
 	    while((functionName = functionFile.readLine()) != null){
-	    	traceFunctions.add(functionName);			
+	    	traceFunctions.add(functionName);
 	    }
 
             for (int functionCount = 0; functionCount < traceFunctions.size(); functionCount++) {

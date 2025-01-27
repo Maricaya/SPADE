@@ -45,14 +45,14 @@ import spade.utility.Result;
 public final class Graphviz extends AbstractStorage{
 
 	private static final Logger logger = Logger.getLogger(Graphviz.class.getName());
-	
-	private static final String 
+
+	private static final String
 		keyFlushAfterBytesCount = "flushAfterBytes",
 		keyOutput = "output";
-	
+
 	private String outputFilePath;
 	private int flushAfterBytes;
-	
+
 	private volatile boolean isInitialized = false;
 
 	private volatile boolean shutdown = false;
@@ -61,7 +61,7 @@ public final class Graphviz extends AbstractStorage{
 	private boolean writeHeader, writeFooter;
 	private String newLine;
 	private boolean closeWriterOnShutdown = true;
-	
+
 	@Override
 	public final synchronized boolean initialize(String arguments){
 		final Map<String, String> map = new HashMap<String, String>();
@@ -72,10 +72,10 @@ public final class Graphviz extends AbstractStorage{
 			logger.log(Level.SEVERE, "Failed to parse arguments and/or storage config file", e);
 			return false;
 		}
-		
+
 		final String outputFilePathString = map.remove(keyOutput);
 		final String flushAfterBytesString = map.remove(keyFlushAfterBytesCount);
-		
+
 		try{
 			initialize(outputFilePathString, flushAfterBytesString);
 			logger.log(Level.INFO, "Arguments ["+keyOutput+"="+outputFilePath+", "+keyFlushAfterBytesCount+"="+flushAfterBytes+"]");
@@ -92,7 +92,7 @@ public final class Graphviz extends AbstractStorage{
 			return false;
 		}
 	}
-	
+
 	public final synchronized void initialize(final String outputFilePathString, final String flushAfterBytesString) throws Exception{
 		final Result<Long> flushAfterBytesCountResult = HelperFunctions.parseLong(flushAfterBytesString, 10, 0, Integer.MAX_VALUE);
 		if(flushAfterBytesCountResult.error){
@@ -108,9 +108,9 @@ public final class Graphviz extends AbstractStorage{
 		initializeUnsafe(outputFilePathString, flushAfterBytesCountResult.result.intValue(), DotConfiguration.getDefaultConfigFilePath(),
 				true, true, System.lineSeparator(), true);
 	}
-	
+
 	public final synchronized void initializeUnsafe(final String validatedOutputFilePath, final int validatedFlushAfterBytesCount,
-			final String dotConfigurationFilePath, 
+			final String dotConfigurationFilePath,
 			final boolean writeHeader, final boolean writeFooter, final String newLine,
 			final boolean closeWriterOnShutdown) throws Exception{
 		if(isInitialized){
@@ -121,7 +121,7 @@ public final class Graphviz extends AbstractStorage{
 		try{
 			this.outputFilePath = validatedOutputFilePath;
 			this.flushAfterBytes = validatedFlushAfterBytesCount;
-			
+
 			if(this.flushAfterBytes <= 0){
 				writer = new BufferedWriter(new FileWriter(new File(this.outputFilePath)));
 			}else{
@@ -130,7 +130,7 @@ public final class Graphviz extends AbstractStorage{
 		}catch(Exception e){
 			throw new Exception("Failed to create output file writer for file: '" + validatedOutputFilePath + "'", e);
 		}
-		
+
 		try{
 			initializeUnsafe(writer, dotConfigurationFilePath, writeHeader, writeFooter, newLine, closeWriterOnShutdown);
 		}catch(Exception e){
@@ -144,41 +144,41 @@ public final class Graphviz extends AbstractStorage{
 			throw e;
 		}
 	}
-	
+
 	public final synchronized void initializeUnsafe(final BufferedWriter bufferedWriter,
-			final String dotConfigurationFilePath, 
+			final String dotConfigurationFilePath,
 			final boolean writeHeader, final boolean writeFooter, final String newLine,
 			final boolean closeWriterOnShutdown) throws Exception{
 		if(isInitialized){
 			throw new Exception("Storage already initialized");
 		}
-		
+
 		if(newLine == null){
 			throw new Exception("New line separator cannot be null");
 		}
-		
+
 		final Result<DotConfiguration> dotConfigurationResult = DotConfiguration.loadFromFile(dotConfigurationFilePath);
 		if(dotConfigurationResult.error){
 			throw new Exception("Failed to initialize dot configuration: " + dotConfigurationResult.errorMessage, dotConfigurationResult.exception);
 		}
 		this.dotConfiguration = dotConfigurationResult.result;
-		
+
 		this.writeHeader = writeHeader;
 		this.writeFooter = writeFooter;
 		this.newLine = newLine;
 		this.outputFileWriter = bufferedWriter;
 		this.closeWriterOnShutdown = closeWriterOnShutdown;
-		
+
 		try{
 			if(this.writeHeader){
-				final String startOfFile = 
+				final String startOfFile =
 						"digraph spade2dot {" + newLine
 						+ "graph [rankdir = \"RL\"];" + newLine
 						+ "node [fontname=\"Helvetica\" fontsize=\"8\" style=\"filled\" margin=\"0.0,0.0\"];" + newLine
 						+ "edge [fontname=\"Helvetica\" fontsize=\"8\"];" + newLine;
 				write(startOfFile, true);
 			}
-			
+
 			this.isInitialized = true;
 		}catch(Exception e){
 			closeFileWriter();
@@ -189,7 +189,7 @@ public final class Graphviz extends AbstractStorage{
 	public final synchronized boolean isShutdown(){
 		return shutdown;
 	}
-	
+
 	@Override
 	public final synchronized boolean shutdown(){
 		if(isInitialized){
@@ -227,7 +227,7 @@ public final class Graphviz extends AbstractStorage{
 			logger.log(Level.WARNING, "Discarded <NULL> data to write");
 		}
 	}
-	
+
 	private final synchronized void closeFileWriter(){
 		if(this.outputFileWriter != null){
 			try{
@@ -266,11 +266,11 @@ public final class Graphviz extends AbstractStorage{
 			return result;
 		}
 	}
-	
+
 	private final String escapeDoubleQuotes(final String str){
 		return str.replaceAll("\"", "\\\\\"");
 	}
-	
+
 	@Override
 	public final synchronized boolean storeVertex(final AbstractVertex vertex){
 		if(vertex == null){
@@ -278,18 +278,20 @@ public final class Graphviz extends AbstractStorage{
 		}else{
 			try{
 				final Map<String, String> annotationsCopy = vertex.getCopyOfAnnotations();
-	
+
 				final String vertexLabel = convertAnnotationsToDotLabel(annotationsCopy);
 				final ShapeColor shapeColor = dotConfiguration.getVertexShapeColor(vertex);
-	
+
 				final String key = escapeDoubleQuotes(vertex.getIdentifierForExport());
 				final String shape = escapeDoubleQuotes(shapeColor.shape);
 				final String color = escapeDoubleQuotes(shapeColor.color);
-				
-				final String vertexString = 
-						"\"" + key + "\" [label=\"" + vertexLabel + "\" shape=\"" 
+
+				final String vertexString =
+						"\"" + key + "\" [label=\"" + vertexLabel + "\" shape=\""
 						+ shape + "\" fillcolor=\"" + color + "\"];" + newLine;
-				write(vertexString, false);
+
+
+				write(vertexString, true);
 			}catch(Exception e){
 				logger.log(Level.WARNING, "Unexpected error. Vertex discarded: " + vertex, e);
 			}
@@ -312,17 +314,17 @@ public final class Graphviz extends AbstractStorage{
 				final String edgeLabel = convertAnnotationsToDotLabel(annotationsCopy);
 				final String style = escapeDoubleQuotes(dotConfiguration.getEdgeStyle(edge));
 				final String color = escapeDoubleQuotes(dotConfiguration.getEdgeColor(edge));
-				
+
 				final AbstractVertex childVertex = edge.getChildVertex();
 				final AbstractVertex parentVertex = edge.getParentVertex();
-				
+
 				final String childKey = escapeDoubleQuotes(childVertex.getIdentifierForExport());
 				final String parentKey = escapeDoubleQuotes(parentVertex.getIdentifierForExport());
-				
-				final String edgeString = 
+
+				final String edgeString =
 						"\"" + childKey + "\" -> \"" + parentKey + "\" [label=\"" + edgeLabel
 						+ "\" color=\"" + color + "\" style=\"" + style + "\"];" + newLine;
-				write(edgeString, false);
+				write(edgeString, true);
 			}catch(Exception e){
 				logger.log(Level.WARNING, "Unexpected error. Edge discarded: " + edge, e);
 			}
@@ -334,5 +336,5 @@ public final class Graphviz extends AbstractStorage{
 	public final synchronized Object executeQuery(String query){
 		throw new RuntimeException("Graphviz storage does NOT support querying");
 	}
-	
+
 }

@@ -66,6 +66,7 @@ public abstract class AbstractFilter {
      * @param vertex The vertex to be sent to the next filter.
      */
     public final void putInNextFilter(AbstractVertex vertex) {
+        System.out.println("==putInNextFilter=="+vertex.getClass().getName());
         nextFilter.putVertex(vertex);
     }
 
@@ -91,11 +92,11 @@ public abstract class AbstractFilter {
      * @param incomingEdge The edge received by this filter.
      */
     public abstract void putEdge(AbstractEdge incomingEdge);
-    
+
     public final void incrementStorageVertexCount(AbstractStorage storage){
     	storage.vertexCount++;
     }
-    
+
     public final void incrementStorageEdgeCount(AbstractStorage storage){
     	storage.edgeCount++;
     }

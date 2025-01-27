@@ -94,7 +94,7 @@ public class Kernel
      * Set of storages active on the local SPADE instance.
      */
     public static Set<AbstractStorage>storages;
-    
+
 	private static final Object defaultQueryStorageClassLock = new Object();
 	private static Class<? extends AbstractStorage> defaultQueryStorageClass = null;
 	private static final Object defaultQueryStorageLock = new Object();
@@ -123,7 +123,7 @@ public class Kernel
 			defaultQueryStorageClass = clazz;
 		}
 	}
-    
+
 	public static AbstractStorage getStorage(String storageName){
 		for(AbstractStorage storage : storages){
 			// Search for the given storage in the storages set.
@@ -134,7 +134,7 @@ public class Kernel
 
 		return null;
 	}
-    
+
     public static boolean isStoragePresent(AbstractStorage storage){
     	for(AbstractStorage existingStorage : storages){
             // Search for the given storage in the storages set by instance.
@@ -144,7 +144,7 @@ public class Kernel
         }
         return false;
     }
-    
+
 	public static AbstractReporter findReporter(String reporterName){
 		if(reporters != null){
 			for(AbstractReporter reporter : reporters){
@@ -256,7 +256,7 @@ public class Kernel
 		}
 		return HOST_NAME;
 	}
-    
+
     public static SocketFactory getClientSocketFactory(){
     	return sslSocketFactory;
     }
@@ -352,7 +352,7 @@ public class Kernel
         sslContext.init(kmf.getKeyManagers(), tmf.getTrustManagers(), secureRandom);
         sslServerSocketFactory = sslContext.getServerSocketFactory();
     }
-    
+
     public static ServerSocket createServerSocket(int listeningPort) throws Exception{
         ServerSocket serverSocket = sslServerSocketFactory.createServerSocket(listeningPort);
         ((SSLServerSocket) serverSocket).setNeedClientAuth(true);
@@ -500,9 +500,14 @@ public class Kernel
                             for (int i = 0; i < BATCH_BUFFER_ELEMENTS; i++)
                             {
                                 Object bufferElement = buffer.getBufferElement();
+                                if (bufferElement != null) {
+                                    System.out.println("==bufferElement==" + bufferElement.getClass().getName());
+                                }
                                 if (bufferElement instanceof AbstractVertex)
                                 {
                                     AbstractVertex tempVertex = (AbstractVertex) bufferElement;
+                                    System.out.println("==putVertex=="+tempVertex.getClass().getName());
+                                    System.out.println("==filter name=="+filters.get(FIRST_FILTER).getClass().getName());
                                     filters.get(FIRST_FILTER).putVertex(tempVertex);
                                 }
                                 else if (bufferElement instanceof AbstractEdge)
@@ -632,7 +637,7 @@ public class Kernel
             case "config":
                 configCommand(line, outputStream);
                 break;
-                
+
             case "set":
             	String tokens[] = line.split("\\s+", 3);
             	if(tokens.length > 2){ // at least 3
@@ -645,7 +650,7 @@ public class Kernel
             	}
             	// Fall down to default because 'set' must be followed by an extra word. If it doesn't then it in an invalid query.
             default:
-                outputStream.print(getControlCommands()); 
+                outputStream.print(getControlCommands());
                 // Don't do println because new line already added to the control commands list
         }
     }
@@ -779,7 +784,7 @@ public class Kernel
                 }
                 outputStream.println("done");
                 break;
-                
+
             default:
             	printConfigCommandUsage(outputStream);
                 break;
@@ -893,13 +898,13 @@ public class Kernel
 		}
 
 		////
-		
+
 		final Map<String, SimpleEntry<String, String>> configMapWithSources;
 		try{
-			configMapWithSources = 
+			configMapWithSources =
 					HelperFunctions.parseKeyValuePairsFromAndGetSources(
-							arguments, 
-							Settings.getDefaultConfigFilePath(classObject), 
+							arguments,
+							Settings.getDefaultConfigFilePath(classObject),
 							Settings.getDefaultConfigFilePath(AbstractReporter.class)
 							);
 		}catch(Throwable t){
@@ -911,7 +916,7 @@ public class Kernel
 		final Buffer buffer;
 		final String bufferConfigKey = BlockingBuffer.keyWorkableFreeMemoryPercentageForBuffer;
 		final SimpleEntry<String, String> bufferConfigValueEntry = configMapWithSources.get(bufferConfigKey);
-		
+
 		if(bufferConfigValueEntry == null){
 			buffer = new Buffer();
 			logger.log(Level.INFO, "Default (unlimited) buffer used for reporter '"+classNameString+"'");
@@ -1004,7 +1009,7 @@ public class Kernel
 					+ "'. Must have an empty public constructor", t);
 			return;
 		}
-		
+
 		final AbstractStorage storage;
 		try{
 			storage = constructor.newInstance();
@@ -1015,14 +1020,14 @@ public class Kernel
 		}
 
 		////
-		
+
 		final Result<ArrayList<String>> screensArgumentsInOrderResult = AbstractScreen.parseScreensInOrder(arguments, classObject);
 		if(screensArgumentsInOrderResult.error){
 			outputStream.println("error: Failed to parse screen arguments for the storage");
 			logger.log(Level.SEVERE, "error: Failed to parse screen arguments for the storage: " + screensArgumentsInOrderResult.toErrorString());
 			return;
 		}
-		
+
 		final Result<ArrayList<AbstractScreen>> screensResult = AbstractScreen.initializeScreensInOrder(screensArgumentsInOrderResult.result);
 		if(screensResult.error){
 			outputStream.println("error: Failed to initialize screen(s) for the storage");
@@ -1068,17 +1073,17 @@ public class Kernel
 		storage.arguments = arguments;
 		storage.vertexCount = 0;
 		storage.edgeCount = 0;
-		
+
 		storages.add(storage);
-		
+
 		final List<String> screenNames = HelperFunctions.getListOfClassNames(screensResult.result);
-		
+
 		logger.log(Level.INFO, "Storage added: " + storage.getClass() + " " + arguments + ". Using screens: " + screenNames);
-		outputStream.println("done." 
+		outputStream.println("done."
 				+ (!setAsDefaultQuery ? "" : " [ Querying default ]")
 				);
 	}
-	
+
     /**
      * Method to add modules.
      *
@@ -1196,7 +1201,7 @@ public class Kernel
 	                    // newly added filter as its next.
 	                    filters.get(index - 1).setNextFilter(filter);
 	                }
-	
+
 	                filters.add(index, filter);
 	                logger.log(Level.INFO, "Filter added: {0}", className + " " + arguments);
 	                outputStream.println("done");
@@ -1303,13 +1308,13 @@ public class Kernel
 		}
 
 		final String storageClassName = tokens[2];
-		
+
 		logger.log(Level.INFO, "Setting default query storage: {0}", storageClassName);
 		outputStream.print("Setting default query storage " + storageClassName + "... ");
-		
+
 		if(Kernel.getDefaultQueryStorageClass() == null){
 			try{
-    			Class<? extends AbstractStorage> newQueryStorageClass = 
+    			Class<? extends AbstractStorage> newQueryStorageClass =
     					(Class<? extends AbstractStorage>)Class.forName("spade.storage."+storageClassName);
     			Kernel.setDefaultQueryStorageClass(newQueryStorageClass);
     			if(Kernel.getDefaultQueryStorage() != null){
@@ -1317,7 +1322,7 @@ public class Kernel
     				logger.log(Level.INFO, "Removed existing default query storage: '"+Kernel.getDefaultQueryStorage().getClass().getSimpleName()+"'");
     				Kernel.setDefaultQueryStorage(null);
     			}
-    			
+
     			AbstractStorage matchingStorage = null;
     			for(AbstractStorage storage : storages){
     				if(storage.getClass().getSimpleName().equalsIgnoreCase(storageClassName)){ // Just get the first one (in no order) TODO
@@ -1325,7 +1330,7 @@ public class Kernel
     					break;
     				}
     			}
-    			
+
     			if(matchingStorage != null){
     				try{
     	        		QueryInstructionExecutor instructionExecutor = matchingStorage.getQueryInstructionExecutor();
@@ -1364,7 +1369,7 @@ public class Kernel
 			}else{
 				// If it is different
 				try{
-	    			Class<? extends AbstractStorage> newQueryStorageClass = 
+	    			Class<? extends AbstractStorage> newQueryStorageClass =
 	    					(Class<? extends AbstractStorage>)Class.forName("spade.storage."+storageClassName);
 	    			Kernel.setDefaultQueryStorageClass(newQueryStorageClass);
 	    			if(Kernel.getDefaultQueryStorage() != null){
@@ -1372,7 +1377,7 @@ public class Kernel
 	    				logger.log(Level.INFO, "Removed existing default query storage: '"+Kernel.getDefaultQueryStorage().getClass().getSimpleName()+"'");
 	    				Kernel.setDefaultQueryStorage(null);
 	    			}
-	    			
+
 	    			AbstractStorage matchingStorage = null;
 	    			for(AbstractStorage storage : storages){
 	    				if(storage.getClass().getSimpleName().equalsIgnoreCase(storageClassName)){ // Just get the first one (in no order) TODO
@@ -1380,7 +1385,7 @@ public class Kernel
 	    					break;
 	    				}
 	    			}
-	    			
+
 	    			if(matchingStorage != null){
 	    				try{
 	    	        		QueryInstructionExecutor instructionExecutor = matchingStorage.getQueryInstructionExecutor();
@@ -1653,7 +1658,7 @@ public class Kernel
 			outputStream.println("Storage " + className + " not found");
 		}
     }
-    
+
     /**
      * Method to remove modules.
      *
