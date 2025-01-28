@@ -202,24 +202,62 @@ class EventHandler implements Runnable {
     }
     //trace contains thread id, function entry or exit, function name and arguments or return value.
     //trace looks like "123 E: $foo Arg #0: i32 %a =123".
-    // trace looks like "#Pid = 2273022730 L: @main  R:  i32 %6 =0"
+    //trace looks like "#Pid = 2273022730 L: @main  R:  i32 %6 =0"
     private void parseEvent(String line) {
         try {
             AbstractVertex function;
             AbstractVertex argument;
             AbstractEdge edge;
             line = line.trim();
+            System.out.println("\u001B[32mDEBUG: Parsing event line: " + line + "\u001B[0m");
             if (line.length() > 0) {
-                String tid = extractThreadId(line);
-                int index = getIndex(line);
+                // get thread id
+                String tid = "";
+
+                int index;
+                // if line starts with "#Pid = "
+                // #Pid = 2833828338 L: @main  R:  i32 %6 =0
+                // index = L
+                if (line.startsWith("#Pid = ")) {
+                    String[] parts = line.split("\\s+"); // Split by spaces
+                    if (parts.length > 2) {
+                        tid = parts[2]; // The thread ID is the third part
+                        if (tid.length() > 5) {
+                            tid = tid.substring(0, 5);
+                        }
+                    }
+
+                    index = line.indexOf(':');
+                    if (index > 0) {
+                        index = index - 2; // Return the index of 'L' or 'E'
+                    }
+                    System.out.println("111 tid: " + tid);
+                    System.out.println("111 index: " + index);
+                } else {
+                    index = line.indexOf(' ');
+                    tid = line.substring(0, index);
+                    System.out.println("222 tid: " + tid);
+                    System.out.println("222 index: " + index);
+                }
+
+
+
+                System.out.println("\u001B[36mDEBUG: Parsed thread ID: '" + tid + "' from line: '" + line + "'\u001B[0m");
+
+                System.out.println("\u001B[36mDEBUG: Processing thread ID: " + tid + "\u001B[0m");
 
                 // if the functionStackMap does not contain a stack for that thread, create a new stack.
                 if (!LLVM.reporter.functionStackMap.containsKey(tid)) {
-                    LLVM.reporter.functionStackMap.put(tid, new Stack());
+                    System.out.println("\u001B[36mDEBUG: Creating new stack for thread " + tid + "\u001B[0m");
+                    LLVM.reporter.functionStackMap.put(tid, new Stack<AbstractVertex>());
                 }
                 //Gets EventType - Entry or Exit
                 line = line.substring(index + 1);
                 char EventType = line.charAt(0); //EventType indicates entering or returning of a function
+
+                System.out.println("\u001B[36mDEBUG: line: " + line + "\u001B[0m");
+                System.out.println("\u001B[36mDEBUG: My own EventType: " + EventType + "\u001B[0m");
+
                 line = line.substring(4); // The rest of the line is function name and arguments/return value.
 
                 //Get the function Name
@@ -232,16 +270,26 @@ class EventHandler implements Runnable {
                 }
 
                 Pattern pattern;
+                System.out.println("\u001B[36mDEBUG: EventType: " + EventType + "\u001B[0m");
                 if (EventType == 'E') {
+                    // when entering a function, we expect the function name and its arguments
+                    System.out.println("\u001B[36mDEBUG: Thread " + tid + " entering function " + functionName +
+                    ". Current stack size: " + LLVM.reporter.functionStackMap.get(tid).size() + "\u001B[0m");
+
                     // Expecting Argument number, arg type, arg name and arg value. eg: Arg #0: i32 %a =123
                     pattern = Pattern.compile("Arg #([0-9]+): ([^ ]+) %([^ ]+) =([^ ]+)");
                     Matcher items = pattern.matcher(line);
+                    System.out.println("\u001B[36mDEBUG: Matcher items: " + items + "\u001B[0m");
 
                     function = new Process();
                     // process id is a combination of functionName, functionId, and thread ID
                     function.addAnnotation("FunctionID", functionName + "." + FunctionId + "." + tid);
                     function.addAnnotation("FunctionName", functionName);
                     function.addAnnotation("ThreadID", tid);
+
+                    System.out.println("\u001B[36mDEBUG: Creating new Process for function: " + functionName +
+                    " (ID: " + functionName + "." + FunctionId + "." + tid + ")\u001B[0m");
+
 
                     LLVM.reporter.putVertex(function);
                     while (items.find()) {
@@ -262,10 +310,19 @@ class EventHandler implements Runnable {
 
                         LLVM.reporter.putVertex(argument);
 
+                        System.out.println("\u001B[36mDEBUG: Processing argument - " +
+                        "Number: " + items.group(1) + ", " +
+                        "Type: " + items.group(2) + ", " +
+                        "Name: " + items.group(3) + ", " +
+                        "Value: " + items.group(4) + "\u001B[0m");
+
+
                         if (!LLVM.reporter.functionStackMap.get(tid).empty()) {
+                            System.out.println("\u001B[36mDEBUG: Creating WasGeneratedBy edge for argument\u001B[0m");
                             edge = new WasGeneratedBy((Artifact) argument, (Process) LLVM.reporter.functionStackMap.get(tid).peek());
                             LLVM.reporter.putEdge(edge);
                         }
+                        System.out.println("\u001B[36mDEBUG: Creating Used edge for argument\u001B[0m");
                         edge = new Used((Process) function, (Artifact) argument);
                         LLVM.reporter.putEdge(edge);
                     }
@@ -273,10 +330,23 @@ class EventHandler implements Runnable {
                         edge = new WasTriggeredBy((Process) function, (Process) LLVM.reporter.functionStackMap.get(tid).peek());
                         LLVM.reporter.putEdge(edge);
                     }
+                    System.out.println("\u001B[36mDEBUG: Before push - Stack size for thread " + tid + ": " +
+                    LLVM.reporter.functionStackMap.get(tid).size() + "\u001B[0m");
+
                     LLVM.reporter.functionStackMap.get(tid).push(function);
+                    System.out.println("\u001B[36mDEBUG: After push - Stack size for thread " + tid + ": " +
+                    LLVM.reporter.functionStackMap.get(tid).size() + "\u001B[0m");
                     FunctionId++;
-                } else // in case of EventType being Return
+                } else if (EventType == 'L')  // in case of EventType being Return
                 {
+                    System.out.println("\u001B[36mDEBUG: EventType is  \u001B[0m" + EventType);
+
+                    System.out.println("\u001B[36mDEBUG: Before pop - Stack size for thread " + tid + ": " +
+                    LLVM.reporter.functionStackMap.get(tid).size() + "\u001B[0m");
+
+
+                    System.out.println("\u001B[36mDEBUG: Thread " + tid + " returning from function " + functionName +
+                    ". Current stack size: " + LLVM.reporter.functionStackMap.get(tid).size() + "\u001B[0m");
                     // Expecting ret type, ret name and ret value. "R:  i32 %ret =2". Ret name is ignored
                     pattern = Pattern.compile("R:  ([^ ]+) %([^ ]+) =(.+)");
                     Matcher items = pattern.matcher(line);
@@ -289,15 +359,24 @@ class EventHandler implements Runnable {
                         argument.addAnnotation("ReturnVal", RetVal);
 
                         LLVM.reporter.putVertex(argument);
-                        edge = new WasGeneratedBy((Artifact) argument, (Process) LLVM.reporter.functionStackMap.get(tid).peek());
-                        LLVM.reporter.putEdge(edge);
+                        try {
+                            edge = new WasGeneratedBy((Artifact) argument, (Process) LLVM.reporter.functionStackMap.get(tid).peek());
+                            LLVM.reporter.putEdge(edge);
+                        } catch (Exception e) {
+                            System.out.println("\u001B[31mERROR: Attempting to generate edge with empty stack for thread " + tid + "\u001B[0m");
+                        }
                     }
-                    LLVM.reporter.functionStackMap.get(tid).pop();
+                    if (!LLVM.reporter.functionStackMap.get(tid).empty()) {
+                        LLVM.reporter.functionStackMap.get(tid).pop();
+                        System.out.println("\u001B[36mDEBUG: After pop - Stack size for thread " + tid + ": " +
+                        LLVM.reporter.functionStackMap.get(tid).size() + "\u001B[0m");
+                    } else {
+                        System.out.println("\u001B[31mERROR: Attempting to pop from empty stack for thread " + tid + "\u001B[0m");
+                    }
                 }
-
             }
-
         } catch (Exception exception) {
+            System.out.println("\u001B[31mERROR: Exception while parsing event: " + exception.getMessage() + "\u001B[0m");
             exception.printStackTrace(System.err);
         }
     }

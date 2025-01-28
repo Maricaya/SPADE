@@ -48,6 +48,8 @@ using namespace std;
 
 namespace {
     Value* GetTid; //the syscall argument for getting a Thread ID is different depending on the operating systems.
+    std::set<node*> globalMinimalPRSNodes;
+
 
     // Returns the appropriate specifier for printf based on the type of variable being printed
     static std::string getPrintfCodeFor(const Value *V) {
@@ -63,15 +65,17 @@ namespace {
         return "%n";
     }
 
-    static inline bool isInMinimalSet(BasicBlock *BB, const set<node*>& minimalPRSNodes) {
-        // std::string functionName = BB->getParent()->getName().str();
-        // for (const auto& node : minimalPRSNodes) {
-        //     if (node->name == functionName) {
-        //         return true;
-        //     }
-        // }
-        // return false;
-        return true;
+    static inline bool isInMinimalSet(std::string functionName) {
+        std::cout << "Function Name: " << functionName << std::endl;
+        for (const auto& node : globalMinimalPRSNodes) {
+            if (node->name == functionName) {
+                std::cout << "isInMinimalSet: true" << std::endl;
+                return true;
+            }
+        }
+        std::cout << "isInMinimalSet: false" << std::endl;
+        return false;
+        // return true;
     }
 
 
@@ -137,8 +141,7 @@ namespace {
             Function *SPADEThreadIdFunc,
             Function * pidFunction,
 	        Function *BufferStrings,
-            bool useBufferStrings,
-            set<node *> minimalPRSNodes
+            bool useBufferStrings
     ){
 	    //Get the first instruction of the first Basic Block in the function
         BasicBlock &BB = F.getEntryBlock();
@@ -153,7 +156,11 @@ namespace {
 	    //F.printAsOperand(strStream, true, F.getParent());
 	    std::string functionName;
         functionName = F.getName().str();
-        printString = "%lu E: @" + functionName; //WAS  %d  now is %lu is for Thread ID, E is for Function Entry
+        if (isInMinimalSet(functionName)) {
+            printString = "%lu E: @" + functionName; //WAS  %d  now is %lu is for Thread ID, E is for Function Entry
+        } else {
+            printString = "%lu E: @***null***"; //WAS  %d  now is %lu is for Thread ID, E is for Function Entry
+        }
 
         unsigned ArgNo = 0;
         std::vector<Value*> PrintArgs;
@@ -186,17 +193,14 @@ namespace {
 
         printString = printString + "\n";
 
-        if (isInMinimalSet(&BB, minimalPRSNodes)) {
-            InsertPrintInstruction(PrintArgs, &BB, InsertPos, printString, SPADEThreadIdFunc, pidFunction, BufferStrings);
-        }
+        InsertPrintInstruction(PrintArgs, &BB, InsertPos, printString, SPADEThreadIdFunc, pidFunction, BufferStrings);
     }
 
     static inline void FunctionExit(
             BasicBlock *BB,
             Function *SPADEThreadIdFunc,
             Function * pidFunction,
-	        Function *BufferStrings,
-            set<node *> minimalPRSNodes
+	        Function *BufferStrings
     ) {
         ReturnInst *Ret = (ReturnInst*) (BB->getTerminator());
 
@@ -205,8 +209,13 @@ namespace {
         raw_string_ostream strStream(printString);
         raw_string_ostream strStream2(retName);
 
-	    std::string functionName;
-        printString = "%lu L: @" + BB->getParent()->getName().str(); //WAS %d NOW IS %lu is for Thread ID, L is for Function Leave
+	    std::string functionName = BB->getParent()->getName().str();
+        // printString = "%lu L: @" + BB->getParent()->getName().str(); //WAS %d NOW IS %lu is for Thread ID, L is for Function Leave
+        if (isInMinimalSet(functionName)) {
+            printString = "%lu L: @null"; //WAS %d NOW IS %lu is for Thread ID, L is for Function Leave
+        } else {
+            printString = "%lu L: @" + functionName; //WAS %d NOW IS %lu is for Thread ID, L is for Function Leave
+        }
 
         std::vector<Value*> PrintArgs;
         if (!BB->getParent()->getReturnType()->isVoidTy()) {
@@ -235,9 +244,8 @@ namespace {
 
         printString = printString + "\n";
 
-        if (isInMinimalSet(BB, minimalPRSNodes)) {
-            InsertPrintInstruction(PrintArgs, BB, Ret, printString, SPADEThreadIdFunc, pidFunction, BufferStrings);
-        }
+        InsertPrintInstruction(PrintArgs, BB, Ret, printString, SPADEThreadIdFunc, pidFunction, BufferStrings);
+
     }
 
 
@@ -249,13 +257,13 @@ namespace {
         Function* PrintfFunc;
         Function* SPADESocketFunc;
         Function* SPADEThreadIdFunc;
-        Function * pidFunction;
+        Function* pidFunction;
         Function* BufferStrings;
         bool monitorMethods;
         bool useBufferStrings;
 
 	    std::map<std::string, int> methodsToMonitor;
-
+        std::map<std::string, std::set<node *>> functionToPRSNodes;
     public:
         static char ID; // Pass identification, replacement for typeid
 
@@ -277,8 +285,8 @@ namespace {
 
                 while (std::getline(file, str))
                 {
-                methodsToMonitor[str] = 1;
-                cout<< " Function name FROM FILE : " << str <<"\n";
+                    methodsToMonitor[str] = 1;
+                    cout<< " Function name FROM FILE : " << str <<"\n";
                 }
                 monitorMethods = true;
             }
@@ -411,7 +419,7 @@ namespace {
             }
 
             // Print pre-mature CFG
-            graph->writeDotFile(F.getName().str()+"_premature.dot", graph->outEdges);
+            // graph->writeDotFile(F.getName().str()+"_premature.dot", graph->outEdges);
 
             /* Reduce nodes that is not a function node */
             std::map<std::string, node *> nodes_cpy = {};
@@ -486,6 +494,9 @@ namespace {
             std::tuple<std::set<node *>, std::map<node *, std::set<node *>>, std::map<node *, std::set<node *>>> minimalPRSResult = graph->findMinimalPRS(V);
             std::set<node *> minimalPRSNodes = std::get<0>(minimalPRSResult);
 
+            globalMinimalPRSNodes.insert(minimalPRSNodes.begin(), minimalPRSNodes.end());
+
+
             // print minimal PRS
             errs().changeColor(raw_ostream::GREEN, true) << "\n Minimal Path Recovery Set: ";
             errs().resetColor();
@@ -519,13 +530,13 @@ namespace {
 
             //FunctionEntry inserts Provenance instrumentation at the start of every function
             // NOTE: send the function entry message
-            FunctionEntry(F, SPADEThreadIdFunc, pidFunction, BufferStrings, useBufferStrings, minimalPRSNodes);
+            FunctionEntry(F, SPADEThreadIdFunc, pidFunction, BufferStrings, useBufferStrings);
 
             //FunctionExit inserts Provenance instrumentation on the end of every function
             for (Function::iterator BB = F.begin(); BB != F.end(); ++BB) {
                 if (isa<ReturnInst > (BB->getTerminator())) {
                     // NOTE: send the function exit message
-                    FunctionExit(BB, SPADEThreadIdFunc, pidFunction, BufferStrings, minimalPRSNodes);
+                    FunctionExit(BB, SPADEThreadIdFunc, pidFunction, BufferStrings);
                 }
             }
             return true;
