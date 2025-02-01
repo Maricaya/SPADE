@@ -3,6 +3,8 @@ REPLIB_OSFLAG=-D_LLVMREPORTER_LINUX
 LLVM_SOURCE=$1
 FUNCTION_FILE=$2
 LLVM_TARGET=$3
+LLVM_Instrumented="${LLVM_SOURCE}_instrumented"
+
 BASE="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 SRC_PATH=$BASE/../../src
 LLC=llc
