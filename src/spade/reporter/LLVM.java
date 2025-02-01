@@ -270,29 +270,28 @@ class EventHandler implements Runnable {
                 }
 
                 Pattern pattern;
-                System.out.println("\u001B[36mDEBUG: EventType: " + EventType + "\u001B[0m");
+                System.out.println("\u001B[36m[LLVM] Thread " + tid + " processing event\u001B[0m");
+
                 if (EventType == 'E') {
                     // when entering a function, we expect the function name and its arguments
-                    System.out.println("\u001B[36mDEBUG: Thread " + tid + " entering function " + functionName +
-                    ". Current stack size: " + LLVM.reporter.functionStackMap.get(tid).size() + "\u001B[0m");
 
                     // Expecting Argument number, arg type, arg name and arg value. eg: Arg #0: i32 %a =123
                     pattern = Pattern.compile("Arg #([0-9]+): ([^ ]+) %([^ ]+) =([^ ]+)");
                     Matcher items = pattern.matcher(line);
-                    System.out.println("\u001B[36mDEBUG: Matcher items: " + items + "\u001B[0m");
-
+                    System.out.println("\u001B[34m[LLVM] Creating Process vertex for function: " + functionName + "\u001B[0m");
                     function = new Process();
                     // process id is a combination of functionName, functionId, and thread ID
                     function.addAnnotation("FunctionID", functionName + "." + FunctionId + "." + tid);
                     function.addAnnotation("FunctionName", functionName);
                     function.addAnnotation("ThreadID", tid);
 
-                    System.out.println("\u001B[36mDEBUG: Creating new Process for function: " + functionName +
-                    " (ID: " + functionName + "." + FunctionId + "." + tid + ")\u001B[0m");
-
+                    System.out.println("\u001B[33m[DOT] Adding vertex: " + function.toString() + "\u001B[0m");
 
                     LLVM.reporter.putVertex(function);
                     while (items.find()) {
+                        System.out.println("\u001B[34m[LLVM] Processing argument: Type=" + items.group(2) +
+                        ", Name=" + items.group(3) + ", Value=" + items.group(4) + "\u001B[0m");
+
                         argument = new Artifact();
 
                         String ArgNo = items.group(1);
@@ -310,43 +309,32 @@ class EventHandler implements Runnable {
 
                         LLVM.reporter.putVertex(argument);
 
-                        System.out.println("\u001B[36mDEBUG: Processing argument - " +
-                        "Number: " + items.group(1) + ", " +
-                        "Type: " + items.group(2) + ", " +
-                        "Name: " + items.group(3) + ", " +
-                        "Value: " + items.group(4) + "\u001B[0m");
+                        System.out.println("\u001B[33m[DOT] Adding vertex: " + argument.toString() + "\u001B[0m");
+                        LLVM.reporter.putVertex(argument);
 
 
                         if (!LLVM.reporter.functionStackMap.get(tid).empty()) {
-                            System.out.println("\u001B[36mDEBUG: Creating WasGeneratedBy edge for argument\u001B[0m");
                             edge = new WasGeneratedBy((Artifact) argument, (Process) LLVM.reporter.functionStackMap.get(tid).peek());
+                            System.out.println("\u001B[33m[DOT] Adding edge (WasGeneratedBy): " + edge.toString() + "\u001B[0m");
                             LLVM.reporter.putEdge(edge);
                         }
-                        System.out.println("\u001B[36mDEBUG: Creating Used edge for argument\u001B[0m");
                         edge = new Used((Process) function, (Artifact) argument);
+                        System.out.println("\u001B[33m[DOT] Adding edge (Used): " + edge.toString() + "\u001B[0m");
                         LLVM.reporter.putEdge(edge);
                     }
                     if (!LLVM.reporter.functionStackMap.get(tid).empty()) {
                         edge = new WasTriggeredBy((Process) function, (Process) LLVM.reporter.functionStackMap.get(tid).peek());
+                        System.out.println("\u001B[33m[DOT] Adding edge (WasTriggeredBy): " + edge.toString() + "\u001B[0m");
                         LLVM.reporter.putEdge(edge);
                     }
-                    System.out.println("\u001B[36mDEBUG: Before push - Stack size for thread " + tid + ": " +
-                    LLVM.reporter.functionStackMap.get(tid).size() + "\u001B[0m");
-
                     LLVM.reporter.functionStackMap.get(tid).push(function);
-                    System.out.println("\u001B[36mDEBUG: After push - Stack size for thread " + tid + ": " +
-                    LLVM.reporter.functionStackMap.get(tid).size() + "\u001B[0m");
+                    System.out.println("\u001B[36m[LLVM] Stack for thread " + tid + " updated. Size: " +
+                        LLVM.reporter.functionStackMap.get(tid).size() + "\u001B[0m");
                     FunctionId++;
                 } else if (EventType == 'L')  // in case of EventType being Return
                 {
-                    System.out.println("\u001B[36mDEBUG: EventType is  \u001B[0m" + EventType);
+                    System.out.println("\u001B[34m[LLVM] Processing return from function: " + functionName + "\u001B[0m");
 
-                    System.out.println("\u001B[36mDEBUG: Before pop - Stack size for thread " + tid + ": " +
-                    LLVM.reporter.functionStackMap.get(tid).size() + "\u001B[0m");
-
-
-                    System.out.println("\u001B[36mDEBUG: Thread " + tid + " returning from function " + functionName +
-                    ". Current stack size: " + LLVM.reporter.functionStackMap.get(tid).size() + "\u001B[0m");
                     // Expecting ret type, ret name and ret value. "R:  i32 %ret =2". Ret name is ignored
                     pattern = Pattern.compile("R:  ([^ ]+) %([^ ]+) =(.+)");
                     Matcher items = pattern.matcher(line);
@@ -358,12 +346,14 @@ class EventHandler implements Runnable {
                         String RetVal = items.group(3);
                         argument.addAnnotation("ReturnVal", RetVal);
 
+                        System.out.println("\u001B[33m[DOT] Adding vertex (return value): " + argument.toString() + "\u001B[0m");
                         LLVM.reporter.putVertex(argument);
                         try {
                             edge = new WasGeneratedBy((Artifact) argument, (Process) LLVM.reporter.functionStackMap.get(tid).peek());
+                            System.out.println("\u001B[33m[DOT] Adding edge (WasGeneratedBy): " + edge.toString() + "\u001B[0m");
                             LLVM.reporter.putEdge(edge);
                         } catch (Exception e) {
-                            System.out.println("\u001B[31mERROR: Attempting to generate edge with empty stack for thread " + tid + "\u001B[0m");
+                            System.out.println("\u001B[31m[ERROR] Failed to create edge - empty stack for thread " + tid + "\u001B[0m");
                         }
                     }
                     if (!LLVM.reporter.functionStackMap.get(tid).empty()) {
@@ -376,7 +366,7 @@ class EventHandler implements Runnable {
                 }
             }
         } catch (Exception exception) {
-            System.out.println("\u001B[31mERROR: Exception while parsing event: " + exception.getMessage() + "\u001B[0m");
+            System.out.println("\u001B[31m[ERROR] Exception in parseEvent: " + exception.getMessage() + "\u001B[0m");
             exception.printStackTrace(System.err);
         }
     }

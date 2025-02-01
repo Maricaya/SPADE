@@ -33,8 +33,12 @@
 #include "llvm/IR/Value.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/CFG.h"
-// #include "llvm/Support/InstIterator.h"
 #include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/CallSite.h"
+#include "llvm/IR/InstIterator.h"
+
+#include "llvm/Analysis/CallGraph.h"
+#include "llvm/Analysis/CallGraphSCCPass.h"
 
 #include "cfg.h"
 
@@ -42,14 +46,19 @@
 #include <fstream>
 #include <iostream>
 #include <string.h>
+#include <memory>
 
 using namespace llvm;
 using namespace std;
 
-namespace {
-    Value* GetTid; //the syscall argument for getting a Thread ID is different depending on the operating systems.
-    std::set<node*> globalMinimalPRSNodes;
+// Global accumulators for statistics.
+unsigned BBNum = 0;
+unsigned minimalBBNum = 0;
+unsigned minimumBBNum = 0;
 
+namespace {
+    // Value* GetTid; //the syscall argument for getting a Thread ID is different depending on the operating systems.
+    std::set<std::string> globalMinimalPRSNodes;
 
     // Returns the appropriate specifier for printf based on the type of variable being printed
     static std::string getPrintfCodeFor(const Value *V) {
@@ -65,15 +74,17 @@ namespace {
         return "%n";
     }
 
-    static inline bool isInMinimalSet(std::string functionName) {
-        std::cout << "Function Name: " << functionName << std::endl;
+    static inline bool isInMinimalSet(std::string& functionName) {
+        errs().changeColor(raw_ostream::BLUE, true) << "Function Name: " << functionName << "\n";
         for (const auto& node : globalMinimalPRSNodes) {
-            if (node->name == functionName) {
-                std::cout << "isInMinimalSet: true" << std::endl;
+            errs().changeColor(raw_ostream::YELLOW, true) << "Node Name: " << node << "; ";
+            if (node == functionName) {
+                errs().changeColor(raw_ostream::GREEN, true) << "isInMinimalSet: true\n";
                 return true;
             }
         }
-        std::cout << "isInMinimalSet: false" << std::endl;
+        errs().changeColor(raw_ostream::RED, true) << "isInMinimalSet: false\n";
+        errs().resetColor();
         return false;
         // return true;
     }
@@ -212,9 +223,9 @@ namespace {
 	    std::string functionName = BB->getParent()->getName().str();
         // printString = "%lu L: @" + BB->getParent()->getName().str(); //WAS %d NOW IS %lu is for Thread ID, L is for Function Leave
         if (isInMinimalSet(functionName)) {
-            printString = "%lu L: @null"; //WAS %d NOW IS %lu is for Thread ID, L is for Function Leave
-        } else {
             printString = "%lu L: @" + functionName; //WAS %d NOW IS %lu is for Thread ID, L is for Function Leave
+        } else {
+            printString = "%lu L: @***null***"; //WAS %d NOW IS %lu is for Thread ID, L is for Function Leave
         }
 
         std::vector<Value*> PrintArgs;
@@ -248,11 +259,18 @@ namespace {
 
     }
 
+    static inline bool shouldSkipFunction(const std::string& funcName, bool monitorMethods, const std::map<std::string, int>& methodsToMonitor) {
+    // Skip if function is not in monitored list or is a special function
+    return (monitorMethods && methodsToMonitor.find(funcName) == methodsToMonitor.end())
+           || funcName == "bufferString"
+           || funcName == "flushStrings"
+           || funcName == "setAtExit";
+}
 
    static cl::opt<std::string> ArgumentsFileName("FunctionNames-input", cl::init(""), cl::Hidden, cl::desc("specifies the input file for the functionNames"));
 
 
-    class InsertMetadataCode : public FunctionPass {
+    class InsertMetadataCode : public ModulePass {
     protected:
         Function* PrintfFunc;
         Function* SPADESocketFunc;
@@ -263,15 +281,13 @@ namespace {
         bool useBufferStrings;
 
 	    std::map<std::string, int> methodsToMonitor;
-        std::map<std::string, std::set<node *>> functionToPRSNodes;
     public:
         static char ID; // Pass identification, replacement for typeid
 
-        InsertMetadataCode() : FunctionPass(ID) {
+        InsertMetadataCode() : ModulePass(ID) {
         }
 
-        bool doInitialization(Module &M) {
-
+        bool doInitialization(Module &M)  {
             FunctionType * ft = FunctionType::get(Type::getInt32Ty(M.getContext()), false);
             pidFunction = Function::Create(ft, GlobalValue::ExternalLinkage, "getpid", &M);
 
@@ -334,179 +350,76 @@ namespace {
             return false;
         }
 
+        bool runOnModule(Module &M)  {
+            errs().changeColor(raw_ostream::MAGENTA, true);
+            errs() << "\n=== Starting Module Analysis ===\n\n";
+            errs().resetColor();
+            errs().changeColor(raw_ostream::CYAN, true);
+            errs() << "Available functions in module:\n";
+            for (auto &F : M) {
+                errs() << "  - " << F.getName() << "\n";
+            }
+            errs().resetColor();
 
-        bool runOnFunction(Function &F) {
-            LLVMContext& context = F.getContext();
-            Module *m = F.getParent();
+            CallGraph &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
 
-            Type *returnType = Type::getVoidTy(m->getContext());
-            PointerType *argType = PointerType::get(Type::getInt8Ty(m->getContext()), 0);
-            FunctionType *FuncType = FunctionType::get(returnType, argType, false);
-
-            // Extract print functions from printLib.c.
-            Function* printFunc = cast<Function>(m->getOrInsertFunction("printFuncName", FuncType));
-            Function* printBB = cast<Function>(m->getOrInsertFunction("printBBName", FuncType));
-
-            cfg *graph = new cfg(F.getName().str());
-
-            IRBuilder<> Builder(context);
-
-            unsigned bb_count = 0;
-
-            /* Unroll basic blocks into function-level & basic block level CFG. */
-
-            // Collect functions inside each basic block
-            std::map<llvm::BasicBlock*, std::vector<std::string>> bb_functions_map;
-            std::map<std::string, unsigned> function_calls;
-            std::map<llvm::BasicBlock*, unsigned> bb_number_map;
-            for (llvm::BasicBlock &bb : F) {
-                bb_functions_map.insert({&bb, {"BasicBlock_"+to_string(bb_count)+"_Head"}});
-
-                for (llvm::Instruction & i: bb) {
-                    if (CallInst *Call = dyn_cast<CallInst>(&i)) {
-                        if (Function *Callee = Call->getCalledFunction()) {
-                            string funcName = Callee->getName().str();
-                            function_calls[funcName] +=1 ;
-                            bb_functions_map[&bb].push_back(funcName + "_" + to_string(function_calls[funcName]));
-                        }
-                    } else if (InvokeInst *Call = dyn_cast<InvokeInst>(&i)) {
-                        if (Function *Callee = Call->getCalledFunction()) {
-                            string funcName = Callee->getName().str();
-                            function_calls[funcName] +=1 ;
-                            bb_functions_map[&bb].push_back(funcName + "_" + to_string(function_calls[funcName]));
-                        }
-                    }
-                }
-
-                bb_functions_map[&bb].push_back("BasicBlock_"+to_string(bb_count)+"_Tail");
-                bb_number_map[&bb] = bb_count;
-                bb_count+=1;
+            Function *MainFunc = M.getFunction("main");
+            if (!MainFunc) {
+                errs().changeColor(raw_ostream::RED, true) << "Warning: No main function found\n";
+                errs().resetColor();
+                return false;
             }
 
-            /* Insert nodes including BasicBlock nodes and FuncName nodes */
-            for (llvm::BasicBlock &bb : F) {
-                for (auto pair : bb_functions_map) {
-                    auto function_nodes = pair.second;
-                    for (auto function_node : function_nodes) {
-                        graph->insertNode(function_node);
-                    }
-                }
-            }
+            errs().changeColor(raw_ostream::MAGENTA, true) << "\n=== Starting Module Analysis ===\n\n";
+            errs().resetColor();
 
-            /* Insert Edges */
+            // 用于追踪已处理的函数
+            std::set<Function*> processed;
 
-            // Insert edges between basic blocks
-            for (llvm::BasicBlock &bb : F) {
-                for (succ_iterator SI = succ_begin(&bb), SE = succ_end(&bb); SI != SE; ++SI) {
-                    BasicBlock *succ = *SI;
-                    // Edge is front edge
-                    if (bb_number_map[&bb] < bb_number_map[succ]) {
-                        graph->insertEdge(bb_functions_map[&bb].back(), bb_functions_map[succ].front());
-                    }
-                    // Edge is back edge
-                    else {
-                        graph->insertEdge(bb_functions_map[&bb].back(), bb_functions_map[succ].back());
-                    }
-                }
-            }
+            processCallTree(CG.getOrInsertFunction(MainFunc), processed);
 
-            // Insert edges inside basic blocks
-            for (llvm::BasicBlock &bb : F) {
-                size_t n = bb_functions_map[&bb].size();
-                for (size_t i=0; i<n-1; i++) {
-                    graph->insertEdge(bb_functions_map[&bb].at(i), bb_functions_map[&bb].at(i+1));
-                }
-            }
-
-            // Print pre-mature CFG
-            // graph->writeDotFile(F.getName().str()+"_premature.dot", graph->outEdges);
-
-            /* Reduce nodes that is not a function node */
-            std::map<std::string, node *> nodes_cpy = {};
-
-            // Skip ENTRY and EXIT
-            for (auto v: graph->nodes) {
-                if (graph->inEdges[v.second].size()==0 || graph->outEdges[v.second].size()==0) {
+            // 处理其他未被处理的函数
+            for (auto &Node : CG) {
+                Function *F = Node.second->getFunction();
+                if (!F || F->isDeclaration() || processed.count(F)) {
                     continue;
                 }
-                nodes_cpy.insert(v);
+                processFunction(*F);
             }
 
-            for (auto v: nodes_cpy) {
+            errs().changeColor(raw_ostream::MAGENTA, true) << "\n=== Module Analysis Complete ===\n\n";
+            errs().resetColor();
 
-                // Remove BasicBlock node v and its edges, add new edges, ignore duplicate edges when add
-                if (v.first.substr(0,10) == "BasicBlock") {
+            return true;
+        }
 
-                    std::set<std::pair<node *, node *>> newEdges_v = {};
-
-                    for(node *src : graph->inEdges[v.second]) {
-                        for(node *dst : graph->outEdges[v.second]) {
-                            if (graph->outEdges[src].find(dst) == graph->outEdges[src].end()){
-                                newEdges_v.insert({src,dst});
-                            }
-                        }
-                    }
-
-                    // Remove v from CFG nodes
-                    graph->nodes.erase(v.first);
-
-                    // Remove v's in edges
-                    auto v_srcs = graph->inEdges[v.second];
-                    graph->inEdges.erase(v.second);
-                    for (auto v_src : v_srcs) {
-                        graph->outEdges[v_src].erase(v.second);
-                    }
-
-                    // Remove v's out edges
-                    auto v_dsts = graph->outEdges[v.second];
-                    graph->outEdges.erase(v.second);
-                    for (auto v_dst : v_dsts) {
-                        graph->inEdges[v_dst].erase(v.second);
-                    }
-
-                    // Add new edges
-                    for (auto newedge : newEdges_v) {
-                        graph->inEdges[std::get<1>(newedge)].insert(std::get<0>(newedge));
-                        graph->outEdges[std::get<0>(newedge)].insert(std::get<1>(newedge));
-                    }
-
-                }
+        void processCallTree(CallGraphNode *Node, std::set<Function*> &processed) {
+            Function *F = Node->getFunction();
+            if (!F || F->isDeclaration() || processed.count(F)) {
+                return;
             }
 
-            /* Apply PRS on function-level CFG */
-
-            errs() << "Function " << F.getName().str() << " summary:\n";
-
-            set<node *> fullNodes = graph->getFullNodes();
-
-            unsigned funcBBNum = fullNodes.size();
-
-            errs() << "Basic blocks: " << funcBBNum;
-
-            set<node *> minimumPRS;
-
-            // print function call graph
-            errs().changeColor(raw_ostream::GREEN, true) << "\nFunction Call Graph:\n";
+            // 先处理当前函数
+            int depth = 1;
+            std::string indent(depth * 2, ' ');
+            errs().changeColor(raw_ostream::GREEN, true) << indent << "→ Processing function: ";
+            errs().changeColor(raw_ostream::CYAN, true) << F->getName() << "\n";
             errs().resetColor();
-            graph->printGraph();
+            processFunction(*F);
+            processed.insert(F);
 
-            std::set<node *> V;
-            std::tuple<std::set<node *>, std::map<node *, std::set<node *>>, std::map<node *, std::set<node *>>> minimalPRSResult = graph->findMinimalPRS(V);
-            std::set<node *> minimalPRSNodes = std::get<0>(minimalPRSResult);
-
-            globalMinimalPRSNodes.insert(minimalPRSNodes.begin(), minimalPRSNodes.end());
-
-
-            // print minimal PRS
-            errs().changeColor(raw_ostream::GREEN, true) << "\n Minimal Path Recovery Set: ";
-            errs().resetColor();
-            errs().changeColor(raw_ostream::BLUE, true) << "keep: " << "";
-            for (std::set<node *>::iterator it = minimalPRSNodes.begin(); it != minimalPRSNodes.end(); ++it) {
-                errs().changeColor(raw_ostream::BLUE, true)  << (*it)->name << "; ";
+            // 递归处理所有被调用的函数
+            for (auto &CallRecord : *Node) {
+                CallGraphNode *CalleeNode = CallRecord.second;
+                processCallTree(CalleeNode, processed);
             }
-            errs().resetColor();
-            errs() << "\n";
 
+            errs().changeColor(raw_ostream::BLUE, true) << indent << "✓ Completed: ";
+            errs().changeColor(raw_ostream::CYAN, true) << F->getName() << "\n";
+            errs().resetColor();
+        }
+
+        void processFunction(Function &F) {
             if(strcmp(F.getName().str().c_str(), "main") == 0){
                 Function * exitingFunction = F.getParent()->getFunction("setAtExit");
                 if(exitingFunction == NULL){
@@ -521,25 +434,201 @@ namespace {
 
 
 	        // If the function is not supposed to be monitored just return true
-	        if((monitorMethods  &&  methodsToMonitor.find(F.getName().str()) == methodsToMonitor.end()) || strcmp(F.getName().str().c_str(),"bufferString")==0 || strcmp(F.getName().str().c_str(), "flushStrings")==0 || strcmp(F.getName().str().c_str(), "setAtExit")==0 ) {
-	        	return true;
+	        if (shouldSkipFunction(F.getName().str(), monitorMethods, methodsToMonitor)) {
+                return;
             }
 
-            std::vector<Instruction*> valuesStoredInFunction;
-            std::vector<BasicBlock*> exitBlocks;
+                        errs().changeColor(raw_ostream::WHITE, true) << "  Analyzing CFG for: " << F.getName() << "\n";
+            errs().resetColor();
 
-            //FunctionEntry inserts Provenance instrumentation at the start of every function
-            // NOTE: send the function entry message
+            // Create a new CFG for the current function.
+            constructCFG(F);
+
             FunctionEntry(F, SPADEThreadIdFunc, pidFunction, BufferStrings, useBufferStrings);
-
-            //FunctionExit inserts Provenance instrumentation on the end of every function
-            for (Function::iterator BB = F.begin(); BB != F.end(); ++BB) {
-                if (isa<ReturnInst > (BB->getTerminator())) {
-                    // NOTE: send the function exit message
-                    FunctionExit(BB, SPADEThreadIdFunc, pidFunction, BufferStrings);
+            for (BasicBlock &BB : F) {
+                if (isa<ReturnInst>(BB.getTerminator())) {
+                    FunctionExit(&BB, SPADEThreadIdFunc, pidFunction, BufferStrings);
                 }
             }
-            return true;
+        }
+
+        void insertPRSNodes2Global(set<node*> minimalPRSNodes) {
+            for (auto *Node : minimalPRSNodes) {
+                errs().changeColor(raw_ostream::CYAN, true) << "      - " << Node->name << "\n";
+                errs().resetColor();
+                globalMinimalPRSNodes.insert(Node->name);
+            }
+        }
+
+        void constructCFG(Function &F) {
+            // Create a new CFG for the current function.
+            string funcName = F.getName().str();
+            cfg *graph = new cfg(funcName);
+
+            // Data structures for building the basic block mapping.
+            unsigned bbCount = 0;
+            map<BasicBlock*, vector<string>> bbFunctionsMap; // Maps a BB to a list of node names.
+            map<BasicBlock*, unsigned> bbNumberMap;          // Assigns each BB an index.
+            map<string, unsigned> functionCallCount;         // Counts call occurrences.
+
+            // ------------------------------------------------------------------
+            // 1. Build the basic block mapping.
+            // For each basic block, add a "Head" marker, record each called function,
+            // and add a "Tail" marker.
+            // ------------------------------------------------------------------
+            for (BasicBlock &bb : F) {
+            string headMarker = "BasicBlock_" + to_string(bbCount) + "_Head";
+            string tailMarker = "BasicBlock_" + to_string(bbCount) + "_Tail";
+            vector<string> nodeList;
+            nodeList.push_back(headMarker);
+
+            for (Instruction &I : bb) {
+                if (CallInst *callInst = dyn_cast<CallInst>(&I)) {
+                if (Function *callee = callInst->getCalledFunction()) {
+                    string calleeName = callee->getName().str();
+                    // Update call count (if needed for naming or statistics).
+                    functionCallCount[calleeName] += 1;
+                    // You may append the call count if desired:
+                    // string callNode = calleeName + "_" + to_string(functionCallCount[calleeName]);
+                    nodeList.push_back(calleeName);
+                }
+                }
+            }
+
+            nodeList.push_back(tailMarker);
+            bbFunctionsMap[&bb] = nodeList;
+            bbNumberMap[&bb] = bbCount;
+            bbCount++;
+            }
+
+            // ------------------------------------------------------------------
+            // 2. Insert nodes into the CFG.
+            // ------------------------------------------------------------------
+            for (const auto &entry : bbFunctionsMap) {
+            for (const auto &nodeName : entry.second) {
+                graph->insertNode(nodeName);
+            }
+            }
+
+            // ------------------------------------------------------------------
+            // 3. Insert inter-basic block edges.
+            // For each basic block, link its tail to the head of each successor.
+            // For back edges, link the tail to the successor's tail.
+            // ------------------------------------------------------------------
+            // for (BasicBlock &bb : F) {
+            // for (BasicBlock *succ : successors(&bb)) {
+            //     if (bbNumberMap[&bb] < bbNumberMap[succ])
+            //     graph->insertEdge(bbFunctionsMap[&bb].back(), bbFunctionsMap[succ].front());
+            //     else
+            //     graph->insertEdge(bbFunctionsMap[&bb].back(), bbFunctionsMap[succ].back());
+            // }
+            // }
+
+            for (BasicBlock &bb : F) {
+                for (succ_iterator SI = succ_begin(&bb), SE = succ_end(&bb); SI != SE; ++SI) {
+                    BasicBlock *succ = *SI;
+                    if (bbNumberMap[&bb] < bbNumberMap[succ]) {
+                        graph->insertEdge(bbFunctionsMap[&bb].back(), bbFunctionsMap[succ].front());
+                    } else {
+                        graph->insertEdge(bbFunctionsMap[&bb].back(), bbFunctionsMap[succ].back());
+                    }
+                }
+            }
+
+            // ------------------------------------------------------------------
+            // 4. Insert intra-basic block edges.
+            // For each basic block, link consecutive nodes.
+            // ------------------------------------------------------------------
+            for (BasicBlock &bb : F) {
+            const vector<string> &nodeList = bbFunctionsMap[&bb];
+            for (size_t i = 0, n = nodeList.size(); i < n - 1; i++) {
+                graph->insertEdge(nodeList[i], nodeList[i+1]);
+            }
+            }
+
+            // Write out the preliminary (premature) CFG to a DOT file.
+            graph->writeDotFile(funcName + "_premature.dot", graph->outEdges);
+
+            // ------------------------------------------------------------------
+            // 5. Reduce non-function nodes (i.e. basic block markers).
+            // Remove nodes with names beginning with "BasicBlock" and rewire edges.
+            // ------------------------------------------------------------------
+            map<string, node*> nodesCopy;
+            // Copy nodes that are not entry/exit nodes.
+            for (auto &kv : graph->nodes) {
+            node *n = kv.second;
+            if (graph->inEdges[n].empty() || graph->outEdges[n].empty())
+                continue;
+            nodesCopy.insert(kv);
+            }
+
+            for (auto &kv : nodesCopy) {
+            const string &nodeName = kv.first;
+            node *n = kv.second;
+            if (nodeName.substr(0, 10) == "BasicBlock") {
+                set<pair<node*, node*>> newEdges;
+                // For every predecessor and successor of n, add an edge if not already present.
+                for (node *src : graph->inEdges[n]) {
+                for (node *dst : graph->outEdges[n]) {
+                    if (graph->outEdges[src].find(dst) == graph->outEdges[src].end())
+                    newEdges.insert({src, dst});
+                }
+                }
+
+                // Remove node n from the graph.
+                graph->nodes.erase(nodeName);
+
+                // Remove n from inEdges and outEdges of connected nodes.
+                auto inNodes = graph->inEdges[n];
+                graph->inEdges.erase(n);
+                for (node *src : inNodes) {
+                graph->outEdges[src].erase(n);
+                }
+                auto outNodes = graph->outEdges[n];
+                graph->outEdges.erase(n);
+                for (node *dst : outNodes) {
+                graph->inEdges[dst].erase(n);
+                }
+
+                // Insert the new direct edges.
+                for (auto &edgePair : newEdges) {
+                node *src = edgePair.first;
+                node *dst = edgePair.second;
+                graph->inEdges[dst].insert(src);
+                graph->outEdges[src].insert(dst);
+                }
+            }
+            }
+
+            // Reset the graph's ENTRY and EXIT.
+            graph->findENTRY();
+            graph->findEXIT();
+
+            // ------------------------------------------------------------------
+            // 6. Apply PRS on the function-level CFG.
+            // ------------------------------------------------------------------
+            set<node*> fullNodes = graph->getFullNodes();
+            unsigned funcBBNum = fullNodes.size();
+
+            // Optionally, you can choose a heuristic for the minimum PRS.
+            graph->findMinimalPRS();
+
+            // Update global statistics.
+            BBNum += funcBBNum;
+            minimalBBNum += graph->minimal_PRS.size();
+
+            // Store the final CFG to a file.
+            graph->storeCFGToFile(funcName, graph->ENTRY, graph->EXIT,
+                                graph->minimal_EdgeAnnotation, graph->nodes);
+
+            insertPRSNodes2Global(graph->minimal_PRS);
+
+            delete graph;
+        }
+
+
+        void getAnalysisUsage(AnalysisUsage &AU) const  {
+            AU.addRequired<CallGraphWrapperPass>();
         }
     };
 
