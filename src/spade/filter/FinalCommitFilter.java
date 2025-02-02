@@ -40,7 +40,6 @@ public class FinalCommitFilter extends AbstractFilter{
 	@Override
 	public void putVertex(AbstractVertex incomingVertex){
 		for(final AbstractStorage storage : storages){
-			System.out.println("==storages=="+storage.getClass().getName());
 			if(storage.putVertex(incomingVertex)){
 				// if success, increment the vertex count
 				incrementStorageVertexCount(storage);

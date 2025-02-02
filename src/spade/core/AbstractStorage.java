@@ -92,12 +92,10 @@ public abstract class AbstractStorage
 		if(vertex == null){
 			block = true;
 		}else{
-            System.out.println("==putVertextoStorage=="+vertex.getClass().getName());
             // check if the vertex is blocked by any screen
 			synchronized(screensLock){
 				for(final AbstractScreen screen : screens){
 					if(screen.blockVertex(vertex)){
-                        System.out.println("==screen"+screen.getClass().getName()+"blockVertex=="+screen.getClass().getName());
 						block = true;
 						break;
 					}

@@ -35,6 +35,7 @@ import java.net.Socket;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Stack;
 import java.util.regex.Matcher;
@@ -143,6 +144,8 @@ class EventHandler implements Runnable {
     Socket threadSocket;
     int FunctionId = 0;
     BufferedReader inFromClient;
+    private List<String> lines = new ArrayList<>();
+    private Stack<String> functionStack = new Stack<>();
 
     EventHandler(Socket socket) {
         threadSocket = socket;
@@ -151,14 +154,43 @@ class EventHandler implements Runnable {
     @Override
     public void run() {
         try {
-            inFromClient = new BufferedReader(new InputStreamReader(threadSocket.getInputStream()));
+            inFromClient = new BufferedReader(
+                new InputStreamReader(threadSocket.getInputStream())
+            );
             LLVM.threadBufferReaders.add(inFromClient);
+
             int adaptitive_pause_step = 10;
             int adaptitive_pause = 10;
+
             while (!LLVM.shutdown || inFromClient.ready() ) {
                 String line = inFromClient.readLine();
                 if (line != null) {
-                    parseEvent(line);
+                    lines.add(line);
+                    // parseEvent(line);
+                    System.out.println("\u001B[36m[LLVM] Collected line: " + line + "\u001B[0m");
+
+                    // 检查函数入口
+                    if (line.contains(" E: ")) {
+                        String funcName = extractFunctionName(line);
+                        System.out.println("\u001B[34m[LLVM] Function enter: " + funcName + "\u001B[0m");
+                        functionStack.push(funcName);
+                    }
+                    // 检查函数出口
+                    else if (line.contains(" L: ")) {
+                        if (!functionStack.isEmpty()) {
+                            String funcName = functionStack.pop();
+                            System.out.println("\u001B[34m[LLVM] Function exit: " + funcName + "\u001B[0m");
+
+                            // 如果栈为空，说明一个完整的调用序列结束了
+                            if (functionStack.isEmpty()) {
+                                System.out.println("\u001B[33m[LLVM] Complete function call sequence detected, processing batch...\u001B[0m \n\n");
+                                // recover lines
+
+                                processBatch();
+                            }
+                        }
+                    }
+
                     adaptitive_pause=0;
                 } else {
                     Thread.sleep(adaptitive_pause);
@@ -167,12 +199,71 @@ class EventHandler implements Runnable {
                     }
                 }
             }
+
+            if (!lines.isEmpty()) {
+                System.out.println("\u001B[33m[LLVM] Processing remaining data...\u001B[0m");
+                processBatch();
+            }
+
+            System.out.println("\u001B[32m[LLVM] Finished processing collected data.\u001B[0m");
+
+            // TODO: is this correct? should we use remove instead of add?
             LLVM.threadBufferReaders.add(inFromClient);
             inFromClient.close();
             threadSocket.close();
         } catch (Exception exception) {
             exception.printStackTrace(System.err);
         }
+    }
+
+    private String extractFunctionName(String line) {
+        try {
+            // 处理以 "#Pid = " 开头的情况
+            if (line.startsWith("#Pid = ")) {
+                int index = line.indexOf(" E: ");
+                if (index > 0) {
+                    String rest = line.substring(index + 4);
+                    index = rest.indexOf(" ");
+                    return index > 0 ? rest.substring(0, index) : rest;
+                }
+            } else {
+                // 处理普通格式
+                int index = line.indexOf(" E: ");
+                if (index > 0) {
+                    String rest = line.substring(index + 4);
+                    index = rest.indexOf(" ");
+                    return index > 0 ? rest.substring(0, index) : rest;
+                }
+            }
+        } catch (Exception e) {
+            System.out.println("\u001B[31m[ERROR] Failed to extract function name from line: " + line + "\u001B[0m");
+        }
+        return "";
+    }
+
+    // 我想在这里使用Recover.java的main方法
+    private void processBatch() {
+        // recover lines
+        Recover.main();
+
+        // System.out.println("\u001B[32m[LLVM] Processing batch of " + lines.size() + " lines...\u001B[0m");
+        // int processedCount = 0;
+
+        // for (String line : lines) {
+        //     try {
+        //         parseEvent(line);
+        //         processedCount++;
+        //     } catch (Exception e) {
+        //         System.out.println("\u001B[31m[ERROR] Failed to parse line: " + line + "\u001B[0m");
+        //         e.printStackTrace();
+        //     }
+        // }
+
+        // System.out.println("\u001B[32m[LLVM] Batch processing completed. Successfully processed: " +
+        //     processedCount + "/" + lines.size() + " lines\u001B[0m");
+
+        // // 清空已处理的数据
+        // lines.clear();
     }
 
     private String extractThreadId(String line) {
@@ -231,20 +322,11 @@ class EventHandler implements Runnable {
                     if (index > 0) {
                         index = index - 2; // Return the index of 'L' or 'E'
                     }
-                    System.out.println("111 tid: " + tid);
-                    System.out.println("111 index: " + index);
                 } else {
                     index = line.indexOf(' ');
                     tid = line.substring(0, index);
-                    System.out.println("222 tid: " + tid);
-                    System.out.println("222 index: " + index);
                 }
 
-
-
-                System.out.println("\u001B[36mDEBUG: Parsed thread ID: '" + tid + "' from line: '" + line + "'\u001B[0m");
-
-                System.out.println("\u001B[36mDEBUG: Processing thread ID: " + tid + "\u001B[0m");
 
                 // if the functionStackMap does not contain a stack for that thread, create a new stack.
                 if (!LLVM.reporter.functionStackMap.containsKey(tid)) {

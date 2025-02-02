@@ -500,14 +500,9 @@ public class Kernel
                             for (int i = 0; i < BATCH_BUFFER_ELEMENTS; i++)
                             {
                                 Object bufferElement = buffer.getBufferElement();
-                                if (bufferElement != null) {
-                                    System.out.println("==bufferElement==" + bufferElement.getClass().getName());
-                                }
                                 if (bufferElement instanceof AbstractVertex)
                                 {
                                     AbstractVertex tempVertex = (AbstractVertex) bufferElement;
-                                    System.out.println("==putVertex=="+tempVertex.getClass().getName());
-                                    System.out.println("==filter name=="+filters.get(FIRST_FILTER).getClass().getName());
                                     filters.get(FIRST_FILTER).putVertex(tempVertex);
                                 }
                                 else if (bufferElement instanceof AbstractEdge)
