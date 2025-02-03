@@ -10,6 +10,11 @@ SRC_PATH=$BASE/../../src
 LLC=llc
 CC=gcc
 
+echo "base: $BASE"
+
+# 首先编译 llvmReporterLib.c
+$CC -fPIC -c ${SRC_PATH}/spade/reporter/llvm/llvmReporterLib.c -o ${SRC_PATH}/spade/reporter/llvm/llvmReporterLib.o
+
 LD_FLAGS=""
 if [[ $* == *-instrument-libc* ]]
 then
@@ -34,8 +39,11 @@ fi
 
 
 $LLC -relocation-model=pic ${LLVM_TARGET}.bc -o ${LLVM_TARGET}.s
-$CC -static ${REPLIB_OSFLAG} ${SRC_PATH}/spade/reporter/llvm/llvmBridge.c -c -o ${SRC_PATH}/spade/reporter/llvm/llvmBridge.o
-$CC -fPIC ${SRC_PATH}/spade/reporter/llvm/llvmClose.c -c -o ${SRC_PATH}/spade/reporter/llvm/llvmClose.o
-$CC ${LLVM_TARGET}.s -c -o ${LLVM_TARGET}.o
-$CC ${LLVM_TARGET}.o ${SRC_PATH}/spade/reporter/llvm/llvmClose.o -shared -o ${LLVM_TARGET}.so $LD_FLAGS
-$CC ${LLVM_TARGET}.so ${SRC_PATH}/spade/reporter/llvm/llvmBridge.o -o ${LLVM_TARGET} -Wl,-R -Wl,./ -lcrypt -lm
+$CC -static -g -ggdb3 ${REPLIB_OSFLAG} ${SRC_PATH}/spade/reporter/llvm/llvmBridge.c -c -o ${SRC_PATH}/spade/reporter/llvm/llvmBridge.o
+$CC -fPIC -g -ggdb3 ${SRC_PATH}/spade/reporter/llvm/llvmClose.c -c -o ${SRC_PATH}/spade/reporter/llvm/llvmClose.o
+$CC -g -ggdb3 ${LLVM_TARGET}.s -c -o ${LLVM_TARGET}.o
+$CC -g -ggdb3 ${LLVM_TARGET}.o ${SRC_PATH}/spade/reporter/llvm/llvmClose.o -shared -o ${LLVM_TARGET}.so $LD_FLAGS
+
+$CC -g -ggdb3 ${LLVM_TARGET}.so ${SRC_PATH}/spade/reporter/llvm/llvmBridge.o ${SRC_PATH}/spade/reporter/llvm/llvmReporterLib.o -o ${LLVM_TARGET} -Wl,-R -Wl,./ -lcrypt -lm
+
+# gcc llvm_test_out.so /home/ubuntu/SPADE/bin/llvm/../../src/spade/reporter/llvm/llvmBridge.o -o llvm_test_out -Wl,-R -Wl,./ -lcrypt -lm
