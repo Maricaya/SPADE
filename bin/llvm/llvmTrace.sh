@@ -10,9 +10,7 @@ SRC_PATH=$BASE/../../src
 LLC=llc
 CC=gcc
 
-echo "base: $BASE"
 
-# 首先编译 llvmReporterLib.c
 $CC -fPIC -c ${SRC_PATH}/spade/reporter/llvm/llvmReporterLib.c -o ${SRC_PATH}/spade/reporter/llvm/llvmReporterLib.o
 
 LD_FLAGS=""
@@ -25,8 +23,11 @@ else
   cp ${LLVM_SOURCE}.bc ${LLVM_Instrumented}.bc
 fi
 
+echo "### Instrumenting ${LLVM_SOURCE}"
+echo "### Instrumented: ${LLVM_Instrumented}"
+echo "### Target: ${BASE}"
 ###
-llvm-link ${LLVM_Instrumented}.bc $BASE/flush.bc -o $BASE/linked.bc
+llvm-link llvm_test_instrumented.bc $BASE/flush.bc -o $BASE/linked.bc
 
 if [ "$FUNCTION_FILE" != "-monitor-all" ]; then
 	opt -dot-callgraph $BASE/linked.bc -o $BASE/callgraph.bc
@@ -46,4 +47,3 @@ $CC -g -ggdb3 ${LLVM_TARGET}.o ${SRC_PATH}/spade/reporter/llvm/llvmClose.o -shar
 
 $CC -g -ggdb3 ${LLVM_TARGET}.so ${SRC_PATH}/spade/reporter/llvm/llvmBridge.o ${SRC_PATH}/spade/reporter/llvm/llvmReporterLib.o -o ${LLVM_TARGET} -Wl,-R -Wl,./ -lcrypt -lm
 
-# gcc llvm_test_out.so /home/ubuntu/SPADE/bin/llvm/../../src/spade/reporter/llvm/llvmBridge.o -o llvm_test_out -Wl,-R -Wl,./ -lcrypt -lm

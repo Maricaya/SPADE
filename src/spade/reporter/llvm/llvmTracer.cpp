@@ -55,8 +55,6 @@ using namespace std;
 unsigned BBNum = 0;
 unsigned minimalBBNum = 0;
 unsigned minimumBBNum = 0;
-std::map<Function*, std::set<Function*>> callerMap;
-
 
 namespace {
     // Value* GetTid; //the syscall argument for getting a Thread ID is different depending on the operating systems.
@@ -149,142 +147,65 @@ namespace {
 	    CallInst::Create((Value*) BufferStrings, ArrayRef<Value*>(PrintArgs), Twine(""), &(*InsertBefore));
     }
 
-    // 添加一个新的辅助函数来获取调用路径
-    static std::string getCallPath(Function *F, const std::map<Function*, std::set<Function*>>& callerMap, std::set<Function*>& visited) {
-        if (visited.count(F) > 0) {  // 防止循环调用
-            return "";
-        }
-        visited.insert(F);
-
-        std::vector<std::string> paths;
-        auto it = callerMap.find(F);
-        if (it != callerMap.end() && !it->second.empty()) {
-            for (auto *caller : it->second) {
-                std::string callerPath = getCallPath(caller, callerMap, visited);
-                if (!callerPath.empty()) {
-                    paths.push_back(callerPath + "->" + F->getName().str());
-                } else {
-                    paths.push_back(caller->getName().str() + "->" + F->getName().str());
-                }
-            }
-        }
-
-        visited.erase(F);
-
-        // 如果有多个调用路径，返回所有路径
-        if (paths.empty()) {
-            return "";
-        } else {
-            std::string result = " (call paths: ";
-            for (const auto& path : paths) {
-                result += path + "; ";
-            }
-            result = result.substr(0, result.length() - 2) + ")";  // 移除最后的 "; " 并添加括号
-            return result;
-        }
-    }
-
-    // 在函数入口处记录调用链
-    static void FunctionEntry(
+    static inline void FunctionEntry(
             Function &F,
             Function *SPADEThreadIdFunc,
             Function * pidFunction,
 	        Function *BufferStrings,
             bool useBufferStrings
-    ){
-	    //Get the first instruction of the first Basic Block in the function
+        ){
+        Module *M = F.getParent();
         BasicBlock &BB = F.getEntryBlock();
         Instruction *InsertPos = BB.begin();
 
+        std::string functionName = F.getName().str();
+
+        // 1. 创建函数名的全局字符串常量
+        GlobalVariable *funcNameGV = getStringRef(M, functionName);
+
+        // 2. 创建 pushCallStack 函数声明
+        PointerType *charPtrTy = Type::getInt8PtrTy(M->getContext());
+        std::vector<Type*> pushTypes;
+        pushTypes.push_back(charPtrTy);
+        FunctionType *pushTy = FunctionType::get(
+            Type::getVoidTy(M->getContext()),
+            pushTypes,
+            false
+        );
+
+        // 3. 获取或创建 pushCallStack 函数
+        Function *pushFunc = cast<Function>(
+            M->getOrInsertFunction("pushCallStack", pushTy)
+        );
+
+        // 4. 创建 GEP 指令来获取字符串指针
+        std::vector<Constant*> indices;
+        indices.push_back(ConstantInt::get(Type::getInt32Ty(M->getContext()), 0));
+        indices.push_back(ConstantInt::get(Type::getInt32Ty(M->getContext()), 0));
+        Constant *strPtr = ConstantExpr::getGetElementPtr(funcNameGV, indices);
+
+        // 5. 创建 pushCallStack 调用
+        std::vector<Value*> pushArgs;
+        pushArgs.push_back(strPtr);
+        CallInst::Create(pushFunc, ArrayRef<Value*>(pushArgs), "", InsertPos);
+
+        // 原有的打印逻辑
         std::string printString;
         std::string argName;
-        std::string functionName = F.getName().str();
-        std::vector<Value*> PrintArgs;  // 声明 PrintArgs
-        Module *M = F.getParent();
-        CallInst *CallChainResult = nullptr;  // 声明 CallChainResult
+        raw_string_ostream strStream(printString);
 
         if (isInMinimalSet(functionName)) {
-            // 基础的函数名信息
             printString = "%lu E: @" + functionName;
-
-            // 创建字符串常量
-            Constant *StrConstant = ConstantDataArray::getString(M->getContext(), functionName);
-            GlobalVariable *GV = new GlobalVariable(*M,
-                StrConstant->getType(),
-                true,
-                GlobalValue::PrivateLinkage,
-                StrConstant,
-                "funcName");
-
-            // 创建指向字符串的指针
-            Constant *Zero = ConstantInt::get(Type::getInt32Ty(M->getContext()), 0);
-            std::vector<Constant*> Indices;
-            Indices.push_back(Zero);
-            Indices.push_back(Zero);
-            Constant *FuncNamePtr = ConstantExpr::getGetElementPtr(GV, Indices);
-
-            // 在函数入口处添加 pushFunction 调用
-            Function *PushFunc = M->getFunction("pushFunction");
-            if (!PushFunc) {
-                std::vector<Type*> ArgTypes;
-                ArgTypes.push_back(Type::getInt8PtrTy(M->getContext()));
-                FunctionType *FT = FunctionType::get(
-                    Type::getVoidTy(M->getContext()),
-                    ArgTypes,
-                    false
-                );
-                PushFunc = Function::Create(
-                    FT,
-                    GlobalValue::ExternalLinkage,
-                    "pushFunction",
-                    M
-                );
-            }
-
-            // 先将函数名压入调用栈
-            std::vector<Value*> PushArgs;
-            PushArgs.push_back(FuncNamePtr);
-            CallInst::Create(PushFunc, ArrayRef<Value*>(PushArgs), "", InsertPos);
-
-            // 获取当前调用链
-            Function *GetCallChainFunc = M->getFunction("getCurrentCallChain");
-            if (!GetCallChainFunc) {
-                FunctionType *FT = FunctionType::get(
-                    Type::getInt8PtrTy(M->getContext()),
-                    false
-                );
-                GetCallChainFunc = Function::Create(
-                    FT,
-                    GlobalValue::ExternalLinkage,
-                    "getCurrentCallChain",
-                    M
-                );
-            }
-
-            // 获取调用链
-            CallChainResult = CallInst::Create(
-                GetCallChainFunc,
-                "",
-                InsertPos
-            );
-
-            // 将调用链信息添加到打印字符串中
-            printString += " %s";
-            if (CallChainResult) {
-                PrintArgs.push_back(CallChainResult);
-            }
         } else {
             printString = "%lu E: @***null***";
         }
 
-        // 处理函数参数
         unsigned ArgNo = 0;
-        for (Function::arg_iterator iterator = F.arg_begin(), E = F.arg_end();
-             iterator != E; ++iterator, ++ArgNo) {
+        std::vector<Value*> PrintArgs;
+        for (Function::arg_iterator iterator = F.arg_begin(), E = F.arg_end(); iterator != E; ++iterator, ++ArgNo) {
             if (iterator) {
                 argName = "";
                 raw_string_ostream strStream2(argName);
-
                 iterator->printAsOperand(strStream2, true, F.getParent());
                 argName = strStream2.str();
 
@@ -306,6 +227,31 @@ namespace {
             }
         }
 
+        // 3. 添加调用链信息
+        printString = printString + " CallChain: %s";
+
+        // 获取或创建getCallTrace函数
+        std::vector<Type*> traceTypes;
+        FunctionType *traceTy = FunctionType::get(
+            Type::getInt8PtrTy(M->getContext()),
+            traceTypes,
+            false
+        );
+
+        Constant *getCallTraceFunc = M->getOrInsertFunction(
+            "getCallTrace",
+            traceTy
+        );
+
+        // 创建getCallTrace调用
+        CallInst *callTraceCall = CallInst::Create(
+            getCallTraceFunc,
+            ArrayRef<Value*>(),
+            "",
+            InsertPos
+        );
+
+        PrintArgs.push_back(callTraceCall);
         printString = printString + "\n";
 
         InsertPrintInstruction(PrintArgs, &BB, InsertPos, printString, SPADEThreadIdFunc, pidFunction, BufferStrings);
@@ -317,84 +263,73 @@ namespace {
             Function * pidFunction,
 	        Function *BufferStrings
     ) {
+        Module *M = BB->getParent()->getParent();
+
+        // 在函数退出前插入popCallStack调用
+        std::vector<Type*> popParamTypes;
+        FunctionType *popCallStackTy = FunctionType::get(
+            Type::getVoidTy(M->getContext()),
+            popParamTypes,
+            false
+        );
+
+        Constant *popCallStackFunc = M->getOrInsertFunction(
+            "popCallStack",
+            popCallStackTy
+        );
+
+        // 在返回指令之前插入popCallStack调用
+        CallInst::Create(
+            popCallStackFunc,
+            ArrayRef<Value*>(),
+            "",
+            BB->getTerminator()
+        );
+
         ReturnInst *Ret = (ReturnInst*) (BB->getTerminator());
-        std::string functionName = BB->getParent()->getName().str();
-        std::vector<Value*> PrintArgs;  // 声明 PrintArgs
-
-        if (isInMinimalSet(functionName)) {
-            Module *M = BB->getParent()->getParent();
-
-            // 在打印返回信息之前获取当前调用链
-            Function *GetCallChainFunc = M->getFunction("getCurrentCallChain");
-            if (!GetCallChainFunc) {
-                FunctionType *FT = FunctionType::get(
-                    Type::getInt8PtrTy(M->getContext()),
-                    false
-                );
-                GetCallChainFunc = Function::Create(
-                    FT,
-                    GlobalValue::ExternalLinkage,
-                    "getCurrentCallChain",
-                    M
-                );
-            }
-
-            CallInst *CallChainResult = CallInst::Create(
-                GetCallChainFunc,
-                "",
-                Ret
-            );
-
-            // 添加调用链到打印参数
-            PrintArgs.push_back(CallChainResult);
-
-            // 最后弹出函数
-            Function *PopFunc = M->getFunction("popFunction");
-            if (!PopFunc) {
-                FunctionType *FT = FunctionType::get(
-                    Type::getVoidTy(M->getContext()),
-                    false
-                );
-                PopFunc = Function::Create(
-                    FT,
-                    GlobalValue::ExternalLinkage,
-                    "popFunction",
-                    M
-                );
-            }
-            CallInst::Create(PopFunc, "", Ret);
-        }
 
         std::string printString;
-        if (Ret->getNumOperands() > 0) {
-            Value *RV = Ret->getOperand(0);
-            if (RV) {
-                std::string retValNameStr;
-                raw_string_ostream strStream(retValNameStr);
-                RV->printAsOperand(strStream, true, BB->getParent()->getParent());
-                retValNameStr = strStream.str();
+        std::string retName;
+        raw_string_ostream strStream(printString);
+        raw_string_ostream strStream2(retName);
 
-                //Escaping % in retValNameStr
-                std::string Tmp;
-                std::swap(Tmp, retValNameStr);
-                std::string::iterator J = std::find(Tmp.begin(), Tmp.end(), '%');
-                while (J != Tmp.end()) {
-                    retValNameStr.append(Tmp.begin(), J);
-                    retValNameStr += "%%";
-                    ++J;
-                    Tmp.erase(Tmp.begin(), J);
-                    J = std::find(Tmp.begin(), Tmp.end(), '%');
-                }
-                retValNameStr += Tmp;
-
-                PrintArgs.push_back(RV);
-                printString = "%lu L: @" + functionName + " R: " + retValNameStr + " =" + getPrintfCodeFor(RV) + "\n";
-            }
+	    std::string functionName = BB->getParent()->getName().str();
+        // printString = "%lu L: @" + BB->getParent()->getName().str(); //WAS %d NOW IS %lu is for Thread ID, L is for Function Leave
+        if (isInMinimalSet(functionName)) {
+            printString = "%lu L: @" + functionName; //WAS %d NOW IS %lu is for Thread ID, L is for Function Leave
         } else {
-            printString = "%lu L: @" + functionName + "\n";
+            printString = "%lu L: @***null***"; //WAS %d NOW IS %lu is for Thread ID, L is for Function Leave
         }
 
+        std::vector<Value*> PrintArgs;
+        if (!BB->getParent()->getReturnType()->isVoidTy()) {
+
+            printString = printString + "  R:  "; //R indicates tInsertPrintInstructionhe return value
+	    Ret->getReturnValue()->printAsOperand(strStream2, true, BB->getParent()->getParent());
+	    retName = strStream2.str();
+
+            //Escaping % in retName
+            std::string Tmp;
+            std::swap(Tmp, retName);
+            std::string::iterator I = std::find(Tmp.begin(), Tmp.end(), '%');
+            //While there are % in Tmp
+            while (I != Tmp.end()) {
+                retName.append(Tmp.begin(), I);
+                retName += "%%";
+                ++I; // Skip the % at the current location
+                Tmp.erase(Tmp.begin(), I);
+                I = std::find(Tmp.begin(), Tmp.end(), '%');
+            }
+
+            retName += Tmp;
+            printString = printString + retName + " =" + getPrintfCodeFor(Ret->getReturnValue());
+            PrintArgs.push_back(Ret->getReturnValue());
+        }
+
+        printString = printString + "\n";
+
         InsertPrintInstruction(PrintArgs, BB, Ret, printString, SPADEThreadIdFunc, pidFunction, BufferStrings);
+
     }
 
     static inline bool shouldSkipFunction(const std::string& funcName, bool monitorMethods, const std::map<std::string, int>& methodsToMonitor) {
@@ -500,25 +435,6 @@ namespace {
             errs().resetColor();
 
             CallGraph &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
-
-
-            for (auto &nodePair : CG) {
-                CallGraphNode *CGN = nodePair.second;
-                if (!CGN)
-                    continue;
-                Function *caller = CGN->getFunction();
-                if (!caller)
-                    continue;
-                for (auto &callRecord : *CGN) {
-                    CallGraphNode *calleeNode = callRecord.second;
-                    if (!calleeNode)
-                        continue;
-                    Function *callee = calleeNode->getFunction();
-                    if (callee && !callee->isDeclaration()) {
-                        callerMap[callee].insert(caller);
-                    }
-                }
-            }
 
             Function *MainFunc = M.getFunction("main");
             if (!MainFunc) {
@@ -793,5 +709,3 @@ namespace {
     static RegisterPass<InsertMetadataCode> X("provenance", "insert provenance instrumentation");
 
 }
-
-
