@@ -25,6 +25,7 @@ import spade.core.AbstractVertex;
 import spade.edge.opm.Used;
 import spade.edge.opm.WasGeneratedBy;
 import spade.edge.opm.WasTriggeredBy;
+import spade.reporter.Recover.Pair;
 import spade.vertex.opm.Artifact;
 import spade.vertex.opm.Process;
 
@@ -33,6 +34,7 @@ import java.io.InputStreamReader;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -241,29 +243,27 @@ class EventHandler implements Runnable {
         return "";
     }
 
-    // 我想在这里使用Recover.java的main方法
     private void processBatch() {
-        // recover lines
-        Recover.main();
+        lines = Recover.main(lines);
 
-        // System.out.println("\u001B[32m[LLVM] Processing batch of " + lines.size() + " lines...\u001B[0m");
-        // int processedCount = 0;
+        System.out.println("\u001B[32m[LLVM] Processing batch of " + lines.size() + " lines...\u001B[0m");
+        int processedCount = 0;
 
-        // for (String line : lines) {
-        //     try {
-        //         parseEvent(line);
-        //         processedCount++;
-        //     } catch (Exception e) {
-        //         System.out.println("\u001B[31m[ERROR] Failed to parse line: " + line + "\u001B[0m");
-        //         e.printStackTrace();
-        //     }
-        // }
+        for (String line : lines) {
+            try {
+                parseEvent(line);
+                processedCount++;
+            } catch (Exception e) {
+                System.out.println("\u001B[31m[ERROR] Failed to parse line: " + line + "\u001B[0m");
+                e.printStackTrace();
+            }
+        }
 
-        // System.out.println("\u001B[32m[LLVM] Batch processing completed. Successfully processed: " +
-        //     processedCount + "/" + lines.size() + " lines\u001B[0m");
+        System.out.println("\u001B[32m[LLVM] Batch processing completed. Successfully processed: " +
+            processedCount + "/" + lines.size() + " lines\u001B[0m");
 
         // // 清空已处理的数据
-        // lines.clear();
+        lines.clear();
     }
 
     private String extractThreadId(String line) {

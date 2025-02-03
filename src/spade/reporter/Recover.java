@@ -37,7 +37,7 @@ public class Recover {
         }
     }
 
-    // Node class representing a node in the graph
+    // Node class representing a node in the CFG
     public static class Node {
         String name;
 
@@ -105,6 +105,10 @@ public class Recover {
 
         /**
          * Given a signature (list of node names), recover the call path from ENTRY to EXIT.
+         * The recovered path is returned as an arrow-separated string.
+         *
+         * Note: This method is retained for debugging purposes.
+         *
          * @param signature List of node names representing the path signature.
          * @return The recovered call path as a string.
          */
@@ -273,129 +277,181 @@ public class Recover {
         return tokens;
     }
 
-    /**
-     * Combine call chains (supports a custom expected set)
-     * Explanation:
-     * - For each mapping key (e.g., "main" or "main->print_even"), split the key to get prefix tokens.
-     * - The corresponding CFG is obtained using the last token in the prefix; call recoverPath to get the call chain string,
-     *   then split the string by "->" into tokens.
-     * - Combination:
-     *   1. For the first mapping, use its call chain tokens as the initial combined chain.
-     *   2. For subsequent mappings, find the common prefix between the combined chain and the mapping prefix,
-     *      remove the duplicate token at the tail of the combined chain, then append the rest of the prefix,
-     *      and finally append the recovered chain (skipping the first token as it is already included).
-     * - Finally, filter out unwanted nodes using the expected set and merge adjacent duplicate nodes.
-     */
-    public static String combineCallChains(List<Pair<String, List<String>>> functionSignatures,
-                                           Map<String, CFG> allCFGs,
-                                           Set<String> expected) {
-        List<List<String>> recoveredChains = new ArrayList<>();
-        List<List<String>> prefixes = new ArrayList<>();
+    // *********************************************************************
+    // New classes and methods for building a call tree with explicit
+    // function entry and exit events.
+    // *********************************************************************
 
-        for (Pair<String, List<String>> fs : functionSignatures) {
-            List<String> mappingPrefix = splitString(fs.first, "->");
-            String effectiveFuncName = mappingPrefix.get(mappingPrefix.size() - 1).trim();
-            CFG currCfg = allCFGs.get(effectiveFuncName);
-            if (currCfg == null) {
-                System.err.println("No function '" + effectiveFuncName + "' found in CFGs.");
-                continue;
-            }
-            String recovered = currCfg.recoverPath(fs.second);
-            List<String> tokens = splitString(recovered, "->");
-            recoveredChains.add(tokens);
-            prefixes.add(mappingPrefix);
-        }
+    // Class representing a node in the call tree
+    public static class CallNode {
+        String name;
+        List<CallNode> children;
 
-        if (recoveredChains.isEmpty())
-            return "";
-
-        List<String> combinedChain = new ArrayList<>(recoveredChains.get(0));
-
-        for (int i = 1; i < recoveredChains.size(); i++) {
-            List<String> curPrefix = prefixes.get(i);
-            int common = 0;
-            while (common < combinedChain.size() && common < curPrefix.size() &&
-                   combinedChain.get(common).trim().equals(curPrefix.get(common).trim())) {
-                common++;
-            }
-            if (common > 0 && !combinedChain.isEmpty() &&
-                combinedChain.get(combinedChain.size() - 1).trim().equals(curPrefix.get(common - 1).trim())) {
-                combinedChain.remove(combinedChain.size() - 1);
-            }
-            for (int j = common; j < curPrefix.size(); j++) {
-                combinedChain.add(curPrefix.get(j).trim());
-            }
-            List<String> tokens = recoveredChains.get(i);
-            for (int j = 1; j < tokens.size(); j++) {
-                combinedChain.add(tokens.get(j).trim());
-            }
+        public CallNode(String name) {
+            this.name = name;
+            this.children = new ArrayList<>();
         }
-        if (combinedChain.isEmpty() || !combinedChain.get(combinedChain.size() - 1).trim().equals(prefixes.get(0).get(0).trim())) {
-            combinedChain.add(prefixes.get(0).get(0).trim());
-        }
-
-        List<String> filtered = new ArrayList<>();
-        for (String token : combinedChain) {
-            if (expected.contains(token))
-                filtered.add(token);
-        }
-        List<String> dedup = new ArrayList<>();
-        for (String token : filtered) {
-            if (dedup.isEmpty() || !dedup.get(dedup.size() - 1).equals(token))
-                dedup.add(token);
-        }
-
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < dedup.size(); i++) {
-            if (i > 0)
-                sb.append("->");
-            sb.append(dedup.get(i));
-        }
-        return sb.toString();
     }
 
+    // Helper function: find a child with the given name in a call tree node
+    public static CallNode findChild(CallNode node, String name) {
+        for (CallNode child : node.children) {
+            if (child.name.equals(name)) {
+                return child;
+            }
+        }
+        return null;
+    }
 
-    // cd /home/ubuntu/SPADE ; /usr/bin/env /usr/lib/jvm/java-11-openjdk-amd64/bin/java @/tmp/cp_6hthejvvuesmmrkxt5y716be.argfile spade.reporter.Recover
+    /**
+     * Build a call tree from a list of mappings.
+     * Each mapping is a Pair where:
+     *   - The key (a string like "main" or "main->print_even") represents the context (the caller chain).
+     *   - The signature (a list of function names) represents the callee chain.
+     *
+     * The tree is built such that each node appears once on entry and its DFS traversal will
+     * record the function name on entry and again on exit.
+     *
+     * @param mappings List of mappings representing call chain segments.
+     * @return The root CallNode of the constructed call tree.
+     */
+    public static CallNode buildCallTree(List<Pair<String, List<String>>> mappings) {
+        CallNode root = null;
+        for (Pair<String, List<String>> mapping : mappings) {
+            // Split the mapping key to get the caller context.
+            List<String> context = splitString(mapping.first, "->");
+            if (context.isEmpty())
+                continue;
+            String rootName = context.get(0).trim();
+            if (root == null) {
+                root = new CallNode(rootName);
+            } else if (!root.name.equals(rootName)) {
+                // If different, one might choose to create a dummy root.
+                // For now, we assume all mappings share the same root.
+            }
+            CallNode current = root;
+            // Traverse (or create) nodes for the context tokens beyond the root.
+            for (int i = 1; i < context.size(); i++) {
+                String token = context.get(i).trim();
+                CallNode child = findChild(current, token);
+                if (child == null) {
+                    child = new CallNode(token);
+                    current.children.add(child);
+                }
+                current = child;
+            }
+            // Now, process the signature tokens as a chain of calls.
+            for (String token : mapping.second) {
+                token = token.trim();
+                CallNode child = new CallNode(token);
+                current.children.add(child);
+                current = child;
+            }
+        }
+        return root;
+    }
 
-    public static void main() {
-        // Assume the CFG file is located at "hello/cfg.txt"
-        String filename = "cfg.txt";
+    /**
+     * Depth-first traversal of the call tree.
+     * Instead of printing, the function names are added to the provided list.
+     * Each function's name is recorded when entering and again when exiting.
+     *
+     * @param node   The current CallNode.
+     * @param result The list to store the trace.
+     */
+    public static void dfsCollect(CallNode node, List<String> result) {
+        // Record entry event
+        result.add(node.name);
+        for (CallNode child : node.children) {
+            dfsCollect(child, result);
+        }
+        // Record exit event
+        result.add(node.name);
+    }
 
-        // Parse the CFG file to get a mapping from function name to CFG
-        Map<String, CFG> allCFGs = parseCFGFile(filename);
-        if (allCFGs.isEmpty()) {
-            System.err.println("No CFG parsed or file error!");
-            return;
+    // *********************************************************************
+    // Main function
+    // *********************************************************************
+    // recover the line form **null** to **function name**
+    public static List<String> main(List<String> lines) {
+        // print the lines
+        for (String line : lines) {
+            System.out.println(line);
         }
 
-        // Define multiple call chain signatures
-        // For example:
-        //   1st mapping: { "main", {"print_odd"} }
-        //   2nd mapping: { "main->print_even", {"add"} }
-        //   3rd mapping: { "main", {"empty"} }
-        List<Pair<String, List<String>>> functionSignatures = new ArrayList<>();
-        functionSignatures.add(new Pair<>("main", Arrays.asList("print_odd")));
-        functionSignatures.add(new Pair<>("main->print_even", Arrays.asList("add")));
-        functionSignatures.add(new Pair<>("main", Arrays.asList("empty")));
+        // Parse the CFG file to get a mapping from function name to CFG
+        Map<String, CFG> allCFGs = parseCFGFile("cfg_1.txt");
+        if (allCFGs.isEmpty()) {
+            System.err.println("No CFG parsed or file error!");
+        }
 
-        // Recover and print the call chain for each mapping (for debugging)
-        for (Pair<String, List<String>> fs : functionSignatures) {
-            List<String> mappingPrefix = splitString(fs.first, "->");
-            String effectiveFuncName = mappingPrefix.get(mappingPrefix.size() - 1).trim();
-            CFG curCFG = allCFGs.get(effectiveFuncName);
-            if (curCFG == null) {
-                System.err.println("No function '" + effectiveFuncName + "' found in CFGs.");
-            } else {
-                String recoveredPath = curCFG.recoverPath(fs.second);
-                System.out.println("[<< " + fs.first + " >>] Recovered path: " + recoveredPath);
+        // lines to functionSignatures
+        List<Pair<String, List<String>>> functionSignatures = new ArrayList<>();
+
+        for (String line : lines) {
+            // Only process lines that contain "E:" and don't contain "***null***"
+            if (line.contains("E:") && !line.contains("***null***")) {
+                // Extract the function name and call chain
+                int callChainIndex = line.indexOf("CallChain:");
+                if (callChainIndex != -1) {
+                    String callChain = line.substring(callChainIndex + "CallChain:".length()).trim();
+
+                    // Extract the function name
+                    int functionNameStart = line.indexOf("@") + 1;
+                    int functionNameEnd = line.indexOf(" ", functionNameStart);
+                    String functionName = line.substring(functionNameStart, functionNameEnd);
+
+                    // Process call chain
+                    String context;
+                    List<String> calleeList = new ArrayList<>();
+                    calleeList.add(functionName);
+
+                    // If the call chain contains multiple functions (connected by ->)
+                    if (callChain.contains("->")) {
+                        // Get all but the last function as context
+                        int lastArrowIndex = callChain.lastIndexOf("->");
+                        context = callChain.substring(0, lastArrowIndex).trim();
+                    } else {
+                        // If there's only one function in the call chain
+                        context = callChain.trim();
+                    }
+
+                    functionSignatures.add(new Pair<>(context, calleeList));
+                }
             }
         }
 
-        // Define a custom expected set (adjust as needed)
-        Set<String> expected = new HashSet<>(Arrays.asList("main", "print_odd", "print_even", "add", "empty"));
+        // Build the call tree and get the trace
+        CallNode root = buildCallTree(functionSignatures);
+        List<String> callChainTrace = new ArrayList<>();
+        dfsCollect(root, callChainTrace);
 
-        // Combine multiple call chains with the custom expected set
-        String combinedPath = combineCallChains(functionSignatures, allCFGs, expected);
-        System.out.println("Combined call chain: " + combinedPath);
+        // Create new list for reconstructed lines
+        List<String> reconstructedLines = new ArrayList<>();
+        int nullIndex = 0;
+
+        // Process each line
+        for (String line : lines) {
+            if (line.contains("***null***")) {
+                // Replace ***null*** with the current function from callChainTrace
+                String newLine = line.replace("***null***", callChainTrace.get(nullIndex));
+                // Remove CallChain part if it exists
+                int callChainIndex = newLine.indexOf("CallChain:");
+                if (callChainIndex != -1) {
+                    newLine = newLine.substring(0, callChainIndex).trim();
+                }
+                reconstructedLines.add(newLine.trim());
+                nullIndex++;
+            } else {
+                // For non-null lines, just remove the CallChain part
+                int callChainIndex = line.indexOf("CallChain:");
+                if (callChainIndex != -1) {
+                    line = line.substring(0, callChainIndex).trim();
+                }
+                reconstructedLines.add(line.trim());
+            }
+        }
+
+        return reconstructedLines;
     }
 }
