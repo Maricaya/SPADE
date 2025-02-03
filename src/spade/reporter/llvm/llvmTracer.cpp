@@ -55,6 +55,8 @@ using namespace std;
 unsigned BBNum = 0;
 unsigned minimalBBNum = 0;
 unsigned minimumBBNum = 0;
+std::map<Function*, std::set<Function*>> callerMap;
+
 
 namespace {
     // Value* GetTid; //the syscall argument for getting a Thread ID is different depending on the operating systems.
@@ -165,10 +167,22 @@ namespace {
         //Prints the function name to strStream
 
 	    //F.printAsOperand(strStream, true, F.getParent());
-	    std::string functionName;
-        functionName = F.getName().str();
+	    std::string functionName = F.getName().str();
         if (isInMinimalSet(functionName)) {
             printString = "%lu E: @" + functionName; //WAS  %d  now is %lu is for Thread ID, E is for Function Entry
+            // 如果该函数有调用者，则追加调用信息
+            auto it = callerMap.find(&F);
+            if (it != callerMap.end() && !it->second.empty()) {
+                printString += " (called from: ";
+                for (auto *caller : it->second) {
+                    printString += caller->getName().str() + ",";
+                }
+                // 去除最后一个逗号并添加结束括号
+                if (printString.back() == ',')
+                    printString.back() = ')';
+                else
+                    printString += ")";
+            }
         } else {
             printString = "%lu E: @***null***"; //WAS  %d  now is %lu is for Thread ID, E is for Function Entry
         }
@@ -224,6 +238,20 @@ namespace {
         // printString = "%lu L: @" + BB->getParent()->getName().str(); //WAS %d NOW IS %lu is for Thread ID, L is for Function Leave
         if (isInMinimalSet(functionName)) {
             printString = "%lu L: @" + functionName; //WAS %d NOW IS %lu is for Thread ID, L is for Function Leave
+             // 取得当前函数
+            Function *F = BB->getParent();
+            // 如果有调用者，则追加调用信息
+            auto it = callerMap.find(F);
+            if (it != callerMap.end() && !it->second.empty()) {
+                printString += " (called from: ";
+                for (auto *caller : it->second) {
+                    printString += caller->getName().str() + ",";
+                }
+                if (printString.back() == ',')
+                    printString.back() = ')';
+                else
+                    printString += ")";
+            }
         } else {
             printString = "%lu L: @***null***"; //WAS %d NOW IS %lu is for Thread ID, L is for Function Leave
         }
@@ -362,6 +390,25 @@ namespace {
             errs().resetColor();
 
             CallGraph &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
+
+
+            for (auto &nodePair : CG) {
+                CallGraphNode *CGN = nodePair.second;
+                if (!CGN)
+                    continue;
+                Function *caller = CGN->getFunction();
+                if (!caller)
+                    continue;
+                for (auto &callRecord : *CGN) {
+                    CallGraphNode *calleeNode = callRecord.second;
+                    if (!calleeNode)
+                        continue;
+                    Function *callee = calleeNode->getFunction();
+                    if (callee && !callee->isDeclaration()) {
+                        callerMap[callee].insert(caller);
+                    }
+                }
+            }
 
             Function *MainFunc = M.getFunction("main");
             if (!MainFunc) {
