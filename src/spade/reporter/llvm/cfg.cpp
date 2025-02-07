@@ -407,6 +407,87 @@ void cfg::findMinimalPRS(std::set<node*> V) {
     return;
 }
 
+static void mergeEdges(map<node *, set<node *>> &tmpOutEdges, map<node *, set<node *>> &outEdges, map<node *, set<node *>> &inEdges) {
+    for(auto it = tmpOutEdges.begin(); it != tmpOutEdges.end(); it++) {
+        if(outEdges.find(it->first) == outEdges.end()) {
+            outEdges[it->first] = set<node *>();
+        }
+        for(auto it2 = it->second.begin(); it2 != it->second.end(); it2++) {
+            outEdges[it->first].insert(*it2);
+            if(inEdges.find(*it2) == inEdges.end()) {
+                inEdges[*it2] = set<node *>();
+            }
+            inEdges[*it2].insert(it->first);
+        }
+    }
+    tmpOutEdges.clear();
+}
+
+// this returns a set of nodes that can be removed from the graph
+set<node *> cfg::findMinimalNodes(PathRecoveryOrder order) {
+    set<node *> ret{};
+    vector<node *> v{};
+    for (auto it = nodes.begin(); it != nodes.end(); it++) {
+        v.push_back(it->second);
+    }
+    srand(unsigned(time(nullptr)));
+
+    switch (order) {
+        case PathRecoveryOrder::RANDOM:
+            random_shuffle(v.begin(), v.end());
+            break;
+        case PathRecoveryOrder::INDEGREE:
+            std::sort(v.begin(), v.end(), [&](node *a, node *b) {
+                return inEdges[a].size() < inEdges[b].size();
+            });
+            break;
+        case PathRecoveryOrder::OUTDEGREE:
+            std::sort(v.begin(), v.end(), [&](node *a, node *b) {
+                return outEdges[a].size() < outEdges[b].size();
+            });
+            break;
+        case PathRecoveryOrder::BOTH:
+            std::sort(v.begin(), v.end(), [&](node *a, node *b) {
+                return inEdges[a].size() * outEdges[a].size() < inEdges[b].size() * outEdges[b].size();
+            });
+            break;
+        default:
+            random_shuffle(v.begin(), v.end());
+            break;
+    }
+
+    map<node *, set<node *>> newOutEdges = outEdges, newInEdges = inEdges, tmpOutEdges;
+    bool flag = false;
+    for(node *n : v) {
+        flag = false;
+        if(newInEdges.find(n) == newInEdges.end() || newInEdges[n].size() == 0
+                || newOutEdges.find(n) == newOutEdges.end() || newOutEdges[n].size() == 0) {
+            continue;
+        }
+        for(node *src : newInEdges[n]) {
+            for(node *dst : newOutEdges[n]) {
+                if(newOutEdges.find(src) != newOutEdges.end() && newOutEdges[src].find(dst) != newOutEdges[src].end()) {
+                    flag = true;
+                    break;
+                } else {
+                    if(tmpOutEdges.find(src) == tmpOutEdges.end()) {
+                        tmpOutEdges[src] = set<node *>();
+                    }
+                    tmpOutEdges[src].insert(dst);
+                }
+            }
+            if(flag) break;
+        }
+        if(!flag) {
+            /* errs() << "Removing node: " << n->name << "\n"; */
+            ret.insert(n);
+            mergeEdges(tmpOutEdges, newOutEdges, newInEdges);
+        }
+    }
+    return ret;
+}
+
+
 
 void cfg::storeCFGToFile(std::string cfg_function_name, node *ENTRY, node *EXIT, std::map<std::pair<node *, node *>, std::string> minimal_EdgeAnnotation, std::map<std::string, node *> nodes) {
     std::ofstream cfg_file("cfg.txt", std::ios::app);

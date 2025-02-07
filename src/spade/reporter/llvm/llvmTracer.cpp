@@ -56,6 +56,12 @@ unsigned BBNum = 0;
 unsigned minimalBBNum = 0;
 unsigned minimumBBNum = 0;
 
+unsigned bbNum = 0;
+unsigned randomReducedBBNum = 0, indegreeReducedBBNum = 0, outdegreeReducedBBNum = 0, bothReducedBBNum = 0;
+
+unsigned allFunctionNum = 0;
+unsigned reducedFunctionNum = 0;
+
 namespace {
     // Value* GetTid; //the syscall argument for getting a Thread ID is different depending on the operating systems.
     std::set<std::string> globalMinimalPRSNodes;
@@ -197,6 +203,7 @@ namespace {
         if (isInMinimalSet(functionName)) {
             printString = "%lu E: @" + functionName;
         } else {
+            reducedFunctionNum++;
             printString = "%lu E: @***null***";
         }
 
@@ -430,7 +437,10 @@ namespace {
             errs().changeColor(raw_ostream::CYAN, true);
             errs() << "Available functions in module:\n";
             for (auto &F : M) {
-                errs() << "  - " << F.getName() << "\n";
+                if (!F.isDeclaration()) {  // 只统计有定义的函数
+                    allFunctionNum++;
+                    errs() << "  - " << F.getName() << "\n";
+                }
             }
             errs().resetColor();
 
@@ -460,7 +470,23 @@ namespace {
                 processFunction(*F);
             }
 
-            errs().changeColor(raw_ostream::MAGENTA, true) << "\n=== Module Analysis Complete ===\n\n";
+            // 在所有函数处理完后打印全局统计信息
+            errs().changeColor(raw_ostream::YELLOW, true);
+            errs() << "\n=== Global Statistics ===\n";
+            errs() << "Total functions: " << allFunctionNum << "\n";
+            errs() << "Preserved functions: " << reducedFunctionNum << "\n";
+            errs() << "Removed functions: " << (allFunctionNum - reducedFunctionNum) << "\n";
+            errs() << "Reduction ratio: " << ((allFunctionNum - reducedFunctionNum) * 100.0 / allFunctionNum) << "%\n";
+            errs() << "Total basic blocks: " << bbNum << "\n";
+            errs() << "Random reduced: " << randomReducedBBNum << "\n";
+            errs() << "Indegree reduced: " << indegreeReducedBBNum << "\n";
+            errs() << "Outdegree reduced: " << outdegreeReducedBBNum << "\n";
+            errs() << "Both reduced: " << bothReducedBBNum << "\n";
+            errs() << "======================\n\n";
+            errs().resetColor();
+
+            errs().changeColor(raw_ostream::MAGENTA, true);
+            errs() << "\n=== Module Analysis Complete ===\n\n";
             errs().resetColor();
 
             return true;
@@ -540,6 +566,7 @@ namespace {
 
             // Data structures for building the basic block mapping.
             unsigned bbCount = 0;
+            unsigned funcBBnum = 0;
             map<BasicBlock*, vector<string>> bbFunctionsMap; // Maps a BB to a list of node names.
             map<BasicBlock*, unsigned> bbNumberMap;          // Assigns each BB an index.
             map<string, unsigned> functionCallCount;         // Counts call occurrences.
@@ -550,6 +577,8 @@ namespace {
             // and add a "Tail" marker.
             // ------------------------------------------------------------------
             for (BasicBlock &bb : F) {
+            funcBBnum++;
+            bbNum++;
             string headMarker = "BasicBlock_" + to_string(bbCount) + "_Head";
             string tailMarker = "BasicBlock_" + to_string(bbCount) + "_Tail";
             vector<string> nodeList;
@@ -683,6 +712,19 @@ namespace {
             set<node*> fullNodes = graph->getFullNodes();
             unsigned funcBBNum = fullNodes.size();
 
+
+            set<node *> randomReduced = graph->findMinimalNodes(PathRecoveryOrder::RANDOM);
+            set<node *> indegreeReduced = graph->findMinimalNodes(PathRecoveryOrder::INDEGREE);
+            set<node *> outdegreeReduced = graph->findMinimalNodes(PathRecoveryOrder::OUTDEGREE);
+            set<node *> bothReduced = graph->findMinimalNodes(PathRecoveryOrder::BOTH);
+
+            randomReducedBBNum += randomReduced.size();
+            indegreeReducedBBNum +=  indegreeReduced.size();
+            outdegreeReducedBBNum += outdegreeReduced.size();
+            bothReducedBBNum += bothReduced.size();
+
+            errs() << "bbs: " << bbNum << ", random: " << randomReducedBBNum << ", indegree: " << indegreeReducedBBNum << ", outdegree: " << outdegreeReducedBBNum << ", both: " << bothReducedBBNum << "\n";
+
             // Optionally, you can choose a heuristic for the minimum PRS.
             graph->findMinimalPRS();
 
@@ -695,6 +737,8 @@ namespace {
                                 graph->minimal_EdgeAnnotation, graph->nodes);
 
             insertPRSNodes2Global(graph->minimal_PRS);
+
+
 
             delete graph;
         }

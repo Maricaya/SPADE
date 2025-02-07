@@ -58,6 +58,7 @@ public:
     std::set<node *> getFullNodes();
     void findMinimalPRS(std::set<node*> V={});
     std::set<node *> findMinimumPRS();
+    std::set<node *> findMinimalNodes(PathRecoveryOrder order = PathRecoveryOrder::RANDOM);
 
     // Recover a Path from runtime signature on the minimal PRS
     std::string RecoverPath(std::vector<std::string> signature, std::map<std::pair<node *, node *>, std::string> minimal_EdgeAnnotation, std::map<std::string, node *> nodes, node *ENTRY, node *EXIT);
