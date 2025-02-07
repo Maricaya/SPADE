@@ -56,9 +56,6 @@ unsigned BBNum = 0;
 unsigned minimalBBNum = 0;
 unsigned minimumBBNum = 0;
 
-unsigned bbNum = 0;
-unsigned randomReducedBBNum = 0, indegreeReducedBBNum = 0, outdegreeReducedBBNum = 0, bothReducedBBNum = 0;
-
 unsigned allFunctionNum = 0;
 unsigned reducedFunctionNum = 0;
 
@@ -166,10 +163,10 @@ namespace {
 
         std::string functionName = F.getName().str();
 
-        // 1. 创建函数名的全局字符串常量
+        // 1. create a global variable for the function name
         GlobalVariable *funcNameGV = getStringRef(M, functionName);
 
-        // 2. 创建 pushCallStack 函数声明
+        // 2. create a declaration for the pushCallStack function
         PointerType *charPtrTy = Type::getInt8PtrTy(M->getContext());
         std::vector<Type*> pushTypes;
         pushTypes.push_back(charPtrTy);
@@ -179,23 +176,22 @@ namespace {
             false
         );
 
-        // 3. 获取或创建 pushCallStack 函数
+        // 3. get or create the pushCallStack function
         Function *pushFunc = cast<Function>(
             M->getOrInsertFunction("pushCallStack", pushTy)
         );
 
-        // 4. 创建 GEP 指令来获取字符串指针
+        // 4. create a GEP instruction to get the string pointer
         std::vector<Constant*> indices;
         indices.push_back(ConstantInt::get(Type::getInt32Ty(M->getContext()), 0));
         indices.push_back(ConstantInt::get(Type::getInt32Ty(M->getContext()), 0));
         Constant *strPtr = ConstantExpr::getGetElementPtr(funcNameGV, indices);
 
-        // 5. 创建 pushCallStack 调用
+        // 5. create a call to the pushCallStack function
         std::vector<Value*> pushArgs;
         pushArgs.push_back(strPtr);
         CallInst::Create(pushFunc, ArrayRef<Value*>(pushArgs), "", InsertPos);
 
-        // 原有的打印逻辑
         std::string printString;
         std::string argName;
         raw_string_ostream strStream(printString);
@@ -234,10 +230,10 @@ namespace {
             }
         }
 
-        // 3. 添加调用链信息
+        // 3. add call chain information
         printString = printString + " CallChain: %s";
 
-        // 获取或创建getCallTrace函数
+        // get or create the getCallTrace function
         std::vector<Type*> traceTypes;
         FunctionType *traceTy = FunctionType::get(
             Type::getInt8PtrTy(M->getContext()),
@@ -250,7 +246,7 @@ namespace {
             traceTy
         );
 
-        // 创建getCallTrace调用
+        // create a call to the getCallTrace function
         CallInst *callTraceCall = CallInst::Create(
             getCallTraceFunc,
             ArrayRef<Value*>(),
@@ -272,7 +268,7 @@ namespace {
     ) {
         Module *M = BB->getParent()->getParent();
 
-        // 在函数退出前插入popCallStack调用
+        // insert a call to the popCallStack function before the return instruction
         std::vector<Type*> popParamTypes;
         FunctionType *popCallStackTy = FunctionType::get(
             Type::getVoidTy(M->getContext()),
@@ -285,7 +281,7 @@ namespace {
             popCallStackTy
         );
 
-        // 在返回指令之前插入popCallStack调用
+        // insert a call to the popCallStack function before the return instruction
         CallInst::Create(
             popCallStackFunc,
             ArrayRef<Value*>(),
@@ -437,7 +433,7 @@ namespace {
             errs().changeColor(raw_ostream::CYAN, true);
             errs() << "Available functions in module:\n";
             for (auto &F : M) {
-                if (!F.isDeclaration()) {  // 只统计有定义的函数
+                if (!F.isDeclaration()) {  // only count functions with definitions
                     allFunctionNum++;
                     errs() << "  - " << F.getName() << "\n";
                 }
@@ -456,12 +452,12 @@ namespace {
             errs().changeColor(raw_ostream::MAGENTA, true) << "\n=== Starting Module Analysis ===\n\n";
             errs().resetColor();
 
-            // 用于追踪已处理的函数
+            // for tracking processed functions
             std::set<Function*> processed;
 
             processCallTree(CG.getOrInsertFunction(MainFunc), processed);
 
-            // 处理其他未被处理的函数
+            // process other unprocessed functions
             for (auto &Node : CG) {
                 Function *F = Node.second->getFunction();
                 if (!F || F->isDeclaration() || processed.count(F)) {
@@ -470,7 +466,7 @@ namespace {
                 processFunction(*F);
             }
 
-            // 在所有函数处理完后打印全局统计信息
+            // print global statistics after all functions are processed
             errs().changeColor(raw_ostream::YELLOW, true);
             errs() << "\n=== Global Statistics ===\n";
             errs() << "Total functions: " << allFunctionNum << "\n";
@@ -478,10 +474,6 @@ namespace {
             errs() << "Removed functions: " << (allFunctionNum - reducedFunctionNum) << "\n";
             errs() << "Reduction ratio: " << ((allFunctionNum - reducedFunctionNum) * 100.0 / allFunctionNum) << "%\n";
             errs() << "Total basic blocks: " << bbNum << "\n";
-            errs() << "Random reduced: " << randomReducedBBNum << "\n";
-            errs() << "Indegree reduced: " << indegreeReducedBBNum << "\n";
-            errs() << "Outdegree reduced: " << outdegreeReducedBBNum << "\n";
-            errs() << "Both reduced: " << bothReducedBBNum << "\n";
             errs() << "======================\n\n";
             errs().resetColor();
 
@@ -498,7 +490,7 @@ namespace {
                 return;
             }
 
-            // 先处理当前函数
+            // process the current function first
             int depth = 1;
             std::string indent(depth * 2, ' ');
             errs().changeColor(raw_ostream::GREEN, true) << indent << "→ Processing function: ";
@@ -507,7 +499,7 @@ namespace {
             processFunction(*F);
             processed.insert(F);
 
-            // 递归处理所有被调用的函数
+            // process all called functions recursively
             for (auto &CallRecord : *Node) {
                 CallGraphNode *CalleeNode = CallRecord.second;
                 processCallTree(CalleeNode, processed);
@@ -578,7 +570,6 @@ namespace {
             // ------------------------------------------------------------------
             for (BasicBlock &bb : F) {
             funcBBnum++;
-            bbNum++;
             string headMarker = "BasicBlock_" + to_string(bbCount) + "_Head";
             string tailMarker = "BasicBlock_" + to_string(bbCount) + "_Tail";
             vector<string> nodeList;
@@ -711,19 +702,6 @@ namespace {
             // ------------------------------------------------------------------
             set<node*> fullNodes = graph->getFullNodes();
             unsigned funcBBNum = fullNodes.size();
-
-
-            set<node *> randomReduced = graph->findMinimalNodes(PathRecoveryOrder::RANDOM);
-            set<node *> indegreeReduced = graph->findMinimalNodes(PathRecoveryOrder::INDEGREE);
-            set<node *> outdegreeReduced = graph->findMinimalNodes(PathRecoveryOrder::OUTDEGREE);
-            set<node *> bothReduced = graph->findMinimalNodes(PathRecoveryOrder::BOTH);
-
-            randomReducedBBNum += randomReduced.size();
-            indegreeReducedBBNum +=  indegreeReduced.size();
-            outdegreeReducedBBNum += outdegreeReduced.size();
-            bothReducedBBNum += bothReduced.size();
-
-            errs() << "bbs: " << bbNum << ", random: " << randomReducedBBNum << ", indegree: " << indegreeReducedBBNum << ", outdegree: " << outdegreeReducedBBNum << ", both: " << bothReducedBBNum << "\n";
 
             // Optionally, you can choose a heuristic for the minimum PRS.
             graph->findMinimalPRS();
