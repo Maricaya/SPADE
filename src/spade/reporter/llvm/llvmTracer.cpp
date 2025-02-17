@@ -473,7 +473,6 @@ namespace {
             errs() << "Preserved functions: " << reducedFunctionNum << "\n";
             errs() << "Removed functions: " << (allFunctionNum - reducedFunctionNum) << "\n";
             errs() << "Reduction ratio: " << ((allFunctionNum - reducedFunctionNum) * 100.0 / allFunctionNum) << "%\n";
-            errs() << "Total basic blocks: " << bbNum << "\n";
             errs() << "======================\n\n";
             errs().resetColor();
 

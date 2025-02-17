@@ -2,6 +2,7 @@ package spade.reporter;
 
 import java.io.*;
 import java.util.*;
+import java.util.stream.Collectors;
 
 public class Recover {
 
@@ -54,7 +55,7 @@ public class Recover {
         Map<String, Node> nodes;
         Map<Node, Set<Node>> outEdges;
         Map<Node, Set<Node>> inEdges;
-        Map<Pair<Node, Node>, String> edgeAnnotations;
+        Map<Pair<Node, Node>, List<String>> edgeAnnotations;
 
         public CFG(String funcName) {
             this.funcName = funcName;
@@ -112,51 +113,58 @@ public class Recover {
          * @param signature List of node names representing the path signature.
          * @return The recovered call path as a string.
          */
-        public String recoverPath(List<String> signature) {
+        public List<String> recoverPath(List<String> signature) {
             if (ENTRY == null || EXIT == null) {
-                return "ERROR: ENTRY or EXIT is null.";
+                return Arrays.asList("ERROR: ENTRY or EXIT is null.");
             }
 
-            String path = ENTRY.name;
+            List<String> path = new ArrayList<>();
+            path.add(ENTRY.name);
             Node current = ENTRY;
 
+            // Process each node in signature
             for (String sig : signature) {
                 Node next = nodes.get(sig);
                 if (next == null) {
-                    path += "->(UnknownNode:" + sig + ")";
+                    path.add("UnknownNode:" + sig);
                     continue;
                 }
-                Pair<Node, Node> edge = new Pair<>(current, next);
-                String anno = edgeAnnotations.get(edge);
-                if (anno != null) {
-                    path += anno + next.name;
-                } else {
-                    path += "->" + next.name;
-                }
-                current = next;
-            }
-            if (current != EXIT) {
-                path += "->" + EXIT.name;
-            }
 
-            // Extra processing on the path (example processing; adjust as needed)
-            int headPos = path.indexOf("BasicBlock_");
-            if (headPos != -1) {
-                int headEnd = path.indexOf("_Head", headPos);
-                if (headEnd != -1) {
-                    int lastTailPos = path.lastIndexOf("BasicBlock_");
-                    if (lastTailPos != -1) {
-                        int tailEnd = path.indexOf("_Tail", lastTailPos);
-                        if (tailEnd != -1) {
-                            System.out.println("function name: " + funcName + "\n");
-                            if (lastTailPos > headEnd + 5) {
-                                path = funcName + path.substring(headEnd + 5, lastTailPos) + funcName;
-                            }
-                        }
+                // Instead of direct edge lookup, find matching edge by source and destination
+                List<String> annotation = null;
+                for (Map.Entry<Pair<Node, Node>, List<String>> entry : edgeAnnotations.entrySet()) {
+                    if (entry.getKey().second.name.equals(next.name)) {
+                        annotation = entry.getValue();
+                        break;
                     }
                 }
+
+                if (annotation != null) {
+                    path.addAll(annotation);
+                }
+                path.add(next.name);
+                current = next;
             }
-            return path;
+
+            // Add EXIT if not already there
+            if (current != EXIT) {
+                path.add(EXIT.name);
+            }
+
+            // Process BasicBlock markers
+            List<String> processedPath = new ArrayList<>();
+            for (String nodeName : path) {
+                if (nodeName.contains("BasicBlock_")) {
+                    int headEnd = nodeName.indexOf("_Head");
+                    if (headEnd != -1) {
+                        processedPath.add(funcName);
+                        continue;
+                    }
+                }
+                processedPath.add(nodeName);
+            }
+
+            return processedPath;
         }
     }
 
@@ -166,7 +174,7 @@ public class Recover {
         String entryName;
         String exitName;
         List<String> nodeNames;
-        Map<Pair<String, String>, String> edgeAnnotations;
+        Map<Pair<String, String>, List<String>> edgeAnnotations;
 
         public ParsedFunctionCFG() {
             nodeNames = new ArrayList<>();
@@ -181,10 +189,10 @@ public class Recover {
         for (String nm : pfc.nodeNames) {
             g.insertNode(nm);
         }
-        for (Map.Entry<Pair<String, String>, String> entry : pfc.edgeAnnotations.entrySet()) {
+        for (Map.Entry<Pair<String, String>, List<String>> entry : pfc.edgeAnnotations.entrySet()) {
             String srcName = entry.getKey().first;
             String dstName = entry.getKey().second;
-            String anno = entry.getValue();
+            List<String> anno = entry.getValue();
             g.insertEdge(srcName, dstName);
             Node srcNode = g.nodes.get(srcName);
             Node dstNode = g.nodes.get(dstName);
@@ -241,15 +249,24 @@ public class Recover {
                     }
                 } else {
                     if (inEdgesSection) {
+                        /*
+                         * BasicBlock_0_Head -> llvm.dbg.declare : ->setAtExit->
+                         * llvm.dbg.declare -> empty : ->add->print_even->
+                         */
                         int pos = line.indexOf(" : ");
                         if (pos != -1) {
                             String left = line.substring(0, pos);
                             String anno = line.substring(pos + 3).trim();
+                            // Split the annotation into a List and remove "->" from each element
+                            List<String> annoList = Arrays.stream(anno.split("->"))
+                                                        .filter(s -> !s.isEmpty())
+                                                        .collect(Collectors.toList());
+
                             int arrowPos = left.indexOf(" -> ");
                             if (arrowPos != -1) {
                                 String srcName = left.substring(0, arrowPos).trim();
                                 String dstName = left.substring(arrowPos + 4).trim();
-                                current.edgeAnnotations.put(new Pair<>(srcName, dstName), anno);
+                                current.edgeAnnotations.put(new Pair<>(srcName, dstName), annoList);
                             }
                         }
                     }
@@ -373,18 +390,37 @@ public class Recover {
     // Main function
     // *********************************************************************
     // recover the line form **null** to **function name**
-    public static List<String> main(List<String> lines) {
-        // print the lines
-        for (String line : lines) {
-            System.out.println(line);
-        }
+    // todo
+    public static void main(String[] args) {
+        List<String> lines = Arrays.asList(
+            "10156 E: @***null*** CallChain: main",
+            "10156 E: @print_odd Arg #0: i32 %number =1 CallChain: main->print_odd",
+            "10156 L: @print_odd",
+            "10156 E: @***null*** Arg #0: i32 %number =2 CallChain: main->print_even",
+            "10156 E: @add Arg #0: i32 %number =2 CallChain: main->print_even->add",
+            "10156 L: @add  R:  i32 %add =3",
+            "10156 L: @***null***",
+            "10156 E: @empty Arg #0: i32 %number =2 CallChain: main->empty",
+            "10156 L: @empty  R:  i32 %2 =3",
+            "10156 L: @***null***  R:  i32 0 =0",
+            "10156"
+        );
+
+        // print the original lines, color : red
+        // print the original lines, color : red
+        System.out.println("\u001B[31m original lines: \u001B[0m");
+        // for (String line : lines) {
+            // System.out.println(line);
+        // }
 
         // Parse the CFG file to get a mapping from function name to CFG
-        Map<String, CFG> allCFGs = parseCFGFile("cfg_1.txt");
+        Map<String, CFG> allCFGs = parseCFGFile("cfg.txt");
         if (allCFGs.isEmpty()) {
             System.err.println("No CFG parsed or file error!");
         }
 
+        // TODO: refactor to a function
+        // find the signature of the function
         // lines to functionSignatures
         List<Pair<String, List<String>>> functionSignatures = new ArrayList<>();
 
@@ -421,37 +457,45 @@ public class Recover {
             }
         }
 
-        // Build the call tree and get the trace
-        CallNode root = buildCallTree(functionSignatures);
-        List<String> callChainTrace = new ArrayList<>();
-        dfsCollect(root, callChainTrace);
+        // TODO: refactor to a function
+        // I want to get the recovered path recoveredPath from the functionSignatures one by one
+        // functionSignature:
+        // {main, [print_odd]}
+        // {main->print_even, [add]}
+        // {main, [main]}
+        List<Pair<String, List<String>>> recoveredPaths = new ArrayList<>();
+        for (Pair<String, List<String>> functionSignature : functionSignatures) {
+            // print the functionSignature
+            // first the last function name
+            String lastFunctionName = functionSignature.first.split("->")[functionSignature.first.split("->").length - 1];
+            // form recoverPath function,
+            // I hope I can filter the recoveredPath, I want to only keep the function name have cfg
+            List<String> recoveredPath = allCFGs.get(lastFunctionName).recoverPath(functionSignature.second);
+            // 过滤 recoveredPath，只保留在 allCFGs 中存在的函数名
+            recoveredPath = recoveredPath.stream()
+                .filter(allCFGs::containsKey)
+                .collect(Collectors.toList());
+            recoveredPaths.add(new Pair<>(functionSignature.first, recoveredPath));
+        }
 
-        // Create new list for reconstructed lines
-        List<String> reconstructedLines = new ArrayList<>();
-        int nullIndex = 0;
+        for (Pair<String, List<String>> recoveredPath : recoveredPaths) {
+            System.out.println("\u001B[33m recoveredPath: \u001B[0m" + recoveredPath.first + " " + recoveredPath.second);
+        }
 
-        // Process each line
-        for (String line : lines) {
-            if (line.contains("***null***")) {
-                // Replace ***null*** with the current function from callChainTrace
-                String newLine = line.replace("***null***", callChainTrace.get(nullIndex));
-                // Remove CallChain part if it exists
-                int callChainIndex = newLine.indexOf("CallChain:");
-                if (callChainIndex != -1) {
-                    newLine = newLine.substring(0, callChainIndex).trim();
+        // Combine all paths and remove duplicates while maintaining order
+        List<String> combinedPath = new ArrayList<>();
+
+        // Process each recoveredPath
+        for (Pair<String, List<String>> recoveredPath : recoveredPaths) {
+            // Add each function name if it's not already in the combined path
+            for (String funcName : recoveredPath.second) {
+                if (!combinedPath.contains(funcName)) {
+                    combinedPath.add(funcName);
                 }
-                reconstructedLines.add(newLine.trim());
-                nullIndex++;
-            } else {
-                // For non-null lines, just remove the CallChain part
-                int callChainIndex = line.indexOf("CallChain:");
-                if (callChainIndex != -1) {
-                    line = line.substring(0, callChainIndex).trim();
-                }
-                reconstructedLines.add(line.trim());
             }
         }
 
-        return reconstructedLines;
+        System.out.println("\u001B[32m Combined path (without duplicates): \u001B[0m");
+        System.out.println(combinedPath);
     }
 }
