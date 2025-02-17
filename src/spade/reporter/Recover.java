@@ -8,12 +8,12 @@ public class Recover {
 
     // Generic Pair class
     public static class Pair<F, S> {
-        public F first;
-        public S second;
+        public F key;
+        public S value;
 
         public Pair(F first, S second) {
-            this.first = first;
-            this.second = second;
+            this.key = first;
+            this.value = second;
         }
 
         @Override
@@ -23,18 +23,18 @@ public class Recover {
             if (!(o instanceof Pair))
                 return false;
             Pair<?, ?> pair = (Pair<?, ?>) o;
-            return Objects.equals(first, pair.first) &&
-                   Objects.equals(second, pair.second);
+            return Objects.equals(key, pair.key) &&
+                    Objects.equals(value, pair.value);
         }
 
         @Override
         public int hashCode() {
-            return Objects.hash(first, second);
+            return Objects.hash(key, value);
         }
 
         @Override
         public String toString() {
-            return "(" + first + ", " + second + ")";
+            return "(" + key + ", " + value + ")";
         }
     }
 
@@ -105,7 +105,8 @@ public class Recover {
         }
 
         /**
-         * Given a signature (list of node names), recover the call path from ENTRY to EXIT.
+         * Given a signature (list of node names), recover the call path from ENTRY to
+         * EXIT.
          * The recovered path is returned as an arrow-separated string.
          *
          * Note: This method is retained for debugging purposes.
@@ -123,7 +124,27 @@ public class Recover {
             Node current = ENTRY;
 
             // Process each node in signature
+            System.out.println("\u001B[31m signature: \u001B[0m" + signature);
+            if (signature.isEmpty()) {
+                // return path;
+                // 找到 edgeAnnotations 中，ENTRY 到 EXIT 的 annotation
+                List<String> annotation = edgeAnnotations.get(new Pair<>(ENTRY, EXIT));
+                System.out.println("\u001B[31m annotation: \u001B[0m" + annotation);
+                if (annotation != null) {
+                    path.addAll(annotation);
+                }
+                // return path;
+            }
+
             for (String sig : signature) {
+                if (sig.equals("***null***")) {
+                    List<String> annotation = edgeAnnotations.get(new Pair<>(ENTRY, EXIT));
+                    if (annotation != null) {
+                        path.addAll(annotation);
+                    }
+                    continue;
+                }
+
                 Node next = nodes.get(sig);
                 if (next == null) {
                     path.add("UnknownNode:" + sig);
@@ -133,7 +154,7 @@ public class Recover {
                 // Instead of direct edge lookup, find matching edge by source and destination
                 List<String> annotation = null;
                 for (Map.Entry<Pair<Node, Node>, List<String>> entry : edgeAnnotations.entrySet()) {
-                    if (entry.getKey().second.name.equals(next.name)) {
+                    if (entry.getKey().value.name.equals(next.name)) {
                         annotation = entry.getValue();
                         break;
                     }
@@ -190,8 +211,8 @@ public class Recover {
             g.insertNode(nm);
         }
         for (Map.Entry<Pair<String, String>, List<String>> entry : pfc.edgeAnnotations.entrySet()) {
-            String srcName = entry.getKey().first;
-            String dstName = entry.getKey().second;
+            String srcName = entry.getKey().key;
+            String dstName = entry.getKey().value;
             List<String> anno = entry.getValue();
             g.insertEdge(srcName, dstName);
             Node srcNode = g.nodes.get(srcName);
@@ -249,18 +270,14 @@ public class Recover {
                     }
                 } else {
                     if (inEdgesSection) {
-                        /*
-                         * BasicBlock_0_Head -> llvm.dbg.declare : ->setAtExit->
-                         * llvm.dbg.declare -> empty : ->add->print_even->
-                         */
                         int pos = line.indexOf(" : ");
                         if (pos != -1) {
                             String left = line.substring(0, pos);
                             String anno = line.substring(pos + 3).trim();
                             // Split the annotation into a List and remove "->" from each element
                             List<String> annoList = Arrays.stream(anno.split("->"))
-                                                        .filter(s -> !s.isEmpty())
-                                                        .collect(Collectors.toList());
+                                    .filter(s -> !s.isEmpty())
+                                    .collect(Collectors.toList());
 
                             int arrowPos = left.indexOf(" -> ");
                             if (arrowPos != -1) {
@@ -323,10 +340,12 @@ public class Recover {
     /**
      * Build a call tree from a list of mappings.
      * Each mapping is a Pair where:
-     *   - The key (a string like "main" or "main->print_even") represents the context (the caller chain).
-     *   - The signature (a list of function names) represents the callee chain.
+     * - The key (a string like "main" or "main->print_even") represents the context
+     * (the caller chain).
+     * - The signature (a list of function names) represents the callee chain.
      *
-     * The tree is built such that each node appears once on entry and its DFS traversal will
+     * The tree is built such that each node appears once on entry and its DFS
+     * traversal will
      * record the function name on entry and again on exit.
      *
      * @param mappings List of mappings representing call chain segments.
@@ -336,7 +355,7 @@ public class Recover {
         CallNode root = null;
         for (Pair<String, List<String>> mapping : mappings) {
             // Split the mapping key to get the caller context.
-            List<String> context = splitString(mapping.first, "->");
+            List<String> context = splitString(mapping.key, "->");
             if (context.isEmpty())
                 continue;
             String rootName = context.get(0).trim();
@@ -358,7 +377,7 @@ public class Recover {
                 current = child;
             }
             // Now, process the signature tokens as a chain of calls.
-            for (String token : mapping.second) {
+            for (String token : mapping.value) {
                 token = token.trim();
                 CallNode child = new CallNode(token);
                 current.children.add(child);
@@ -386,116 +405,231 @@ public class Recover {
         result.add(node.name);
     }
 
+    // recover the function name from the lines
+    public List<String> recoverFunctions(List<String> lines) {
+        Map<String, CFG> allCFGs = parseCFGFile("cfg.txt");
+
+        if (allCFGs.isEmpty()) {
+            System.err.println("No CFG parsed or file error!");
+        }
+
+        List<Pair<String, List<String>>> functionSignatures = extractFunctionSignatures(lines, allCFGs);
+        List<Pair<String, List<String>>> recoveredPaths = recoverPaths(functionSignatures, allCFGs);
+
+        return combinePaths(recoveredPaths);
+    }
+
+    private List<Pair<String, List<String>>> extractFunctionSignatures(List<String> lines, Map<String, CFG> allCFGs) {
+        List<Pair<String, List<String>>> functionSignatures = new ArrayList<>();
+
+        for (String line : lines) {
+            // Only process lines containing "E:" (entry points)
+            if (!line.contains("E:")) {
+                continue;
+            }
+
+            int callChainIndex = line.indexOf("CallChain:");
+            if (callChainIndex == -1) {
+                continue;
+            }
+
+            String callChain = line.substring(callChainIndex + "CallChain:".length()).trim();
+            int functionNameStart = line.indexOf("@") + 1;
+            int functionNameEnd = line.indexOf(" ", functionNameStart);
+            String functionName = line.substring(functionNameStart, functionNameEnd);
+
+            // 如果是 null 函数，检查是否有从入口到出口的注释边
+            if (functionName.equals("***null***")) {
+                String context = callChain.contains("->")
+                        ? callChain.substring(0, callChain.lastIndexOf("->")).trim()
+                        : callChain.trim();
+
+                // 获取最后一个函数的 CFG
+                String lastFunction = context.contains("->")
+                        ? context.substring(context.lastIndexOf("->") + 2)
+                        : context;
+
+                CFG cfg = allCFGs.get(lastFunction);
+                if (cfg == null || !hasEdgeAnnotation(cfg)) {
+                    continue; // 跳过这个 null 函数
+                } else {
+                    // 如果不跳过，则将 context 设置为 null
+                    // functionName = "";
+                }
+            }
+
+            String context = callChain.contains("->")
+                    ? callChain.substring(0, callChain.lastIndexOf("->")).trim()
+                    : callChain.trim();
+
+            List<String> calleeList = new ArrayList<>();
+            calleeList.add(functionName);
+            functionSignatures.add(new Pair<>(context, calleeList));
+        }
+
+        // Debug output
+        System.out.println("\u001B[34m function signatures: \u001B[0m");
+        for (Pair<String, List<String>> functionSignature : functionSignatures) {
+            System.out.println(functionSignature.key + " " + functionSignature.value);
+        }
+
+        return functionSignatures;
+    }
+
+    // 新增辅助方法：检查是否存在边的注释
+    private boolean hasEdgeAnnotation(CFG cfg) {
+        if (cfg.ENTRY == null || cfg.EXIT == null) {
+            return false;
+        }
+
+        // 检查 edgeAnnotations 中是否存在从入口到出口的边
+        Pair<Node, Node> edge = new Pair<>(cfg.ENTRY, cfg.EXIT);
+        List<String> annotations = cfg.edgeAnnotations.get(edge);
+        return annotations != null && !annotations.isEmpty();
+    }
+
+    private List<Pair<String, List<String>>> recoverPaths(
+            List<Pair<String, List<String>>> functionSignatures,
+            Map<String, CFG> allCFGs) {
+        List<Pair<String, List<String>>> recoveredPaths = new ArrayList<>();
+
+        for (Pair<String, List<String>> functionSignature : functionSignatures) {
+            String lastFunctionName = functionSignature.key.split("->")[functionSignature.key.split("->").length - 1];
+
+            List<String> recoveredPath = allCFGs.get(lastFunctionName)
+                    .recoverPath(functionSignature.value)
+                    .stream()
+                    .filter(allCFGs::containsKey)
+                    .collect(Collectors.toList());
+            // color yellow
+            System.out.println("\u001B[33m recoveredPath: \u001B[0m" + recoveredPath);
+
+            // System.out.println("\u001B[33m functionSignature: \u001B[0m" +
+            // functionSignature.first + " " + functionSignature.second);
+
+            recoveredPaths.add(new Pair<>(functionSignature.key, recoveredPath));
+        }
+
+        return recoveredPaths;
+    }
+
+    private boolean canMerge(Pair<String, List<String>> p1,
+            Pair<String, List<String>> p2) {
+        // 解析 p1 的 key，如 "main->print_even" → ["main", "print_even"]
+        List<String> p1KeyList = splitKey(p1.key);
+
+        // p1KeyList 的最后一个函数
+        if (p1KeyList.isEmpty())
+            return false;
+        String lastFunc = p1KeyList.get(p1KeyList.size() - 1);
+
+        // 如果 p2 的 recoveredPath 中包含 lastFunc，则满足合并条件
+        return p2.value.contains(lastFunc);
+    }
+
+    private Pair<String, List<String>> doMerge(
+            Pair<String, List<String>> p1,
+            Pair<String, List<String>> p2) {
+        // 解析 p1.key，找出最后一个函数
+        List<String> p1KeyList = splitKey(p1.key);
+        String lastFunc = p1KeyList.get(p1KeyList.size() - 1);
+
+        // 在 p2.value 中找到 lastFunc 的位置
+        List<String> p2Path = new ArrayList<>(p2.value);
+        int idx = p2Path.indexOf(lastFunc);
+        if (idx < 0) {
+            // 理论上不会出现，因为 canMerge 保证了包含
+            return p2;
+        }
+
+        // 把 p1.value 中的剩余部分插入到 p2Path 中 lastFunc 之后
+        // 例如 p1.value = ["print_even", "add"], lastFunc = "print_even"
+        // p2.value = ["main", "print_even", "empty"]
+        // 那么要把 "add" 插到 "print_even" 之后
+        List<String> p1Path = p1.value;
+        // 找到 p1Path 中 lastFunc 的位置
+        int posInP1 = p1Path.indexOf(lastFunc);
+        // 若 posInP1 >= 0，则 posInP1 之后的所有函数都插入 p2
+        if (posInP1 >= 0 && posInP1 + 1 < p1Path.size()) {
+            // 需要插入的部分
+            List<String> leftover = p1Path.subList(posInP1 + 1, p1Path.size());
+            // 在 idx+1 位置插入 leftover
+            p2Path.addAll(idx + 1, leftover);
+        }
+
+        // 合并后用 p2 的 key 作为新的 key（通常更外层）
+        return new Pair<>(p2.key, p2Path);
+    }
+
+    private List<String> combinePaths(List<Pair<String, List<String>>> recoveredPaths) {
+        // 反复尝试合并，直到无法再合并
+        boolean merged = true;
+        while (merged) {
+            merged = false;
+            for (int i = 0; i < recoveredPaths.size() - 1; i++) {
+                Pair<String, List<String>> p1 = recoveredPaths.get(i);
+                Pair<String, List<String>> p2 = recoveredPaths.get(i + 1);
+
+                if (canMerge(p1, p2)) {
+                    // 执行合并
+                    Pair<String, List<String>> mergedPair = doMerge(p1, p2);
+                    // 用合并结果替换 p2
+                    recoveredPaths.set(i + 1, mergedPair);
+                    // 移除 p1
+                    recoveredPaths.remove(i);
+                    merged = true;
+                    break; // 重新开始扫描
+                }
+            }
+        }
+
+        // 经过上面多轮合并后，recoveredPaths 中的若干映射可能已经合并成更大粒度
+        // 最后可以把所有剩余映射都拼接起来（或根据需要处理）
+        List<String> combinedLog = new ArrayList<>();
+        for (Pair<String, List<String>> p : recoveredPaths) {
+            combinedLog.addAll(p.value);
+        }
+
+        // 可选：去除相邻重复
+        combinedLog = removeAdjacentDuplicates(combinedLog);
+
+        // 输出调试
+        System.out.println("Combined path (preserving order): " + combinedLog);
+        return combinedLog;
+    }
+
+    // 工具函数：去除相邻重复
+    private List<String> removeAdjacentDuplicates(List<String> input) {
+        List<String> result = new ArrayList<>();
+        for (String s : input) {
+            if (result.isEmpty() || !result.get(result.size() - 1).equals(s)) {
+                result.add(s);
+            }
+        }
+        return result;
+    }
+
+    // 工具函数：解析 key，如 "main->print_even" → ["main", "print_even"]
+    private List<String> splitKey(String key) {
+        if (key == null || key.isEmpty())
+            return new ArrayList<>();
+        // 你可以用正则或更简单的 split
+        return Arrays.asList(key.split("->"));
+    }
+
     // *********************************************************************
     // Main function
     // *********************************************************************
     // recover the line form **null** to **function name**
     // todo
     public static void main(String[] args) {
-        List<String> lines = Arrays.asList(
-            "10156 E: @***null*** CallChain: main",
-            "10156 E: @print_odd Arg #0: i32 %number =1 CallChain: main->print_odd",
-            "10156 L: @print_odd",
-            "10156 E: @***null*** Arg #0: i32 %number =2 CallChain: main->print_even",
-            "10156 E: @add Arg #0: i32 %number =2 CallChain: main->print_even->add",
-            "10156 L: @add  R:  i32 %add =3",
-            "10156 L: @***null***",
-            "10156 E: @empty Arg #0: i32 %number =2 CallChain: main->empty",
-            "10156 L: @empty  R:  i32 %2 =3",
-            "10156 L: @***null***  R:  i32 0 =0",
-            "10156"
-        );
+        // Recover recover = new Recover();
+        // recover.recoverFunctions(lines);
+    }
 
-        // print the original lines, color : red
-        // print the original lines, color : red
-        System.out.println("\u001B[31m original lines: \u001B[0m");
-        // for (String line : lines) {
-            // System.out.println(line);
-        // }
-
-        // Parse the CFG file to get a mapping from function name to CFG
-        Map<String, CFG> allCFGs = parseCFGFile("cfg.txt");
-        if (allCFGs.isEmpty()) {
-            System.err.println("No CFG parsed or file error!");
-        }
-
-        // TODO: refactor to a function
-        // find the signature of the function
-        // lines to functionSignatures
-        List<Pair<String, List<String>>> functionSignatures = new ArrayList<>();
-
+    public static void printLines(List<String> lines) {
         for (String line : lines) {
-            // Only process lines that contain "E:" and don't contain "***null***"
-            if (line.contains("E:") && !line.contains("***null***")) {
-                // Extract the function name and call chain
-                int callChainIndex = line.indexOf("CallChain:");
-                if (callChainIndex != -1) {
-                    String callChain = line.substring(callChainIndex + "CallChain:".length()).trim();
-
-                    // Extract the function name
-                    int functionNameStart = line.indexOf("@") + 1;
-                    int functionNameEnd = line.indexOf(" ", functionNameStart);
-                    String functionName = line.substring(functionNameStart, functionNameEnd);
-
-                    // Process call chain
-                    String context;
-                    List<String> calleeList = new ArrayList<>();
-                    calleeList.add(functionName);
-
-                    // If the call chain contains multiple functions (connected by ->)
-                    if (callChain.contains("->")) {
-                        // Get all but the last function as context
-                        int lastArrowIndex = callChain.lastIndexOf("->");
-                        context = callChain.substring(0, lastArrowIndex).trim();
-                    } else {
-                        // If there's only one function in the call chain
-                        context = callChain.trim();
-                    }
-
-                    functionSignatures.add(new Pair<>(context, calleeList));
-                }
-            }
+            System.out.println(line);
         }
-
-        // TODO: refactor to a function
-        // I want to get the recovered path recoveredPath from the functionSignatures one by one
-        // functionSignature:
-        // {main, [print_odd]}
-        // {main->print_even, [add]}
-        // {main, [main]}
-        List<Pair<String, List<String>>> recoveredPaths = new ArrayList<>();
-        for (Pair<String, List<String>> functionSignature : functionSignatures) {
-            // print the functionSignature
-            // first the last function name
-            String lastFunctionName = functionSignature.first.split("->")[functionSignature.first.split("->").length - 1];
-            // form recoverPath function,
-            // I hope I can filter the recoveredPath, I want to only keep the function name have cfg
-            List<String> recoveredPath = allCFGs.get(lastFunctionName).recoverPath(functionSignature.second);
-            // 过滤 recoveredPath，只保留在 allCFGs 中存在的函数名
-            recoveredPath = recoveredPath.stream()
-                .filter(allCFGs::containsKey)
-                .collect(Collectors.toList());
-            recoveredPaths.add(new Pair<>(functionSignature.first, recoveredPath));
-        }
-
-        for (Pair<String, List<String>> recoveredPath : recoveredPaths) {
-            System.out.println("\u001B[33m recoveredPath: \u001B[0m" + recoveredPath.first + " " + recoveredPath.second);
-        }
-
-        // Combine all paths and remove duplicates while maintaining order
-        List<String> combinedPath = new ArrayList<>();
-
-        // Process each recoveredPath
-        for (Pair<String, List<String>> recoveredPath : recoveredPaths) {
-            // Add each function name if it's not already in the combined path
-            for (String funcName : recoveredPath.second) {
-                if (!combinedPath.contains(funcName)) {
-                    combinedPath.add(funcName);
-                }
-            }
-        }
-
-        System.out.println("\u001B[32m Combined path (without duplicates): \u001B[0m");
-        System.out.println(combinedPath);
     }
 }
