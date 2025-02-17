@@ -408,14 +408,15 @@ public class Recover {
     // recover the function name from the lines
     public List<String> recoverFunctions(List<String> lines) {
         Map<String, CFG> allCFGs = parseCFGFile("cfg.txt");
-
         if (allCFGs.isEmpty()) {
             System.err.println("No CFG parsed or file error!");
         }
+        return processAndCombinePaths(lines, allCFGs);
+    }
 
+    private List<String> processAndCombinePaths(List<String> lines, Map<String, CFG> allCFGs) {
         List<Pair<String, List<String>>> functionSignatures = extractFunctionSignatures(lines, allCFGs);
         List<Pair<String, List<String>>> recoveredPaths = recoverPaths(functionSignatures, allCFGs);
-
         return combinePaths(recoveredPaths);
     }
 
@@ -423,69 +424,81 @@ public class Recover {
         List<Pair<String, List<String>>> functionSignatures = new ArrayList<>();
 
         for (String line : lines) {
-            // Only process lines containing "E:" (entry points)
             if (!line.contains("E:")) {
                 continue;
             }
 
-            int callChainIndex = line.indexOf("CallChain:");
-            if (callChainIndex == -1) {
+            FunctionInfo info = extractFunctionInfo(line);
+            if (info == null) continue;
+
+            if (shouldSkipNullFunction(info, allCFGs)) {
                 continue;
             }
 
-            String callChain = line.substring(callChainIndex + "CallChain:".length()).trim();
-            int functionNameStart = line.indexOf("@") + 1;
-            int functionNameEnd = line.indexOf(" ", functionNameStart);
-            String functionName = line.substring(functionNameStart, functionNameEnd);
-
-            // 如果是 null 函数，检查是否有从入口到出口的注释边
-            if (functionName.equals("***null***")) {
-                String context = callChain.contains("->")
-                        ? callChain.substring(0, callChain.lastIndexOf("->")).trim()
-                        : callChain.trim();
-
-                // 获取最后一个函数的 CFG
-                String lastFunction = context.contains("->")
-                        ? context.substring(context.lastIndexOf("->") + 2)
-                        : context;
-
-                CFG cfg = allCFGs.get(lastFunction);
-                if (cfg == null || !hasEdgeAnnotation(cfg)) {
-                    continue; // 跳过这个 null 函数
-                } else {
-                    // 如果不跳过，则将 context 设置为 null
-                    // functionName = "";
-                }
-            }
-
-            String context = callChain.contains("->")
-                    ? callChain.substring(0, callChain.lastIndexOf("->")).trim()
-                    : callChain.trim();
-
-            List<String> calleeList = new ArrayList<>();
-            calleeList.add(functionName);
-            functionSignatures.add(new Pair<>(context, calleeList));
+            functionSignatures.add(new Pair<>(info.context, info.calleeList));
         }
 
-        // Debug output
+        debugPrintSignatures(functionSignatures);
+        return functionSignatures;
+    }
+
+    private static class FunctionInfo {
+        String functionName;
+        String context;
+        List<String> calleeList;
+    }
+
+    private FunctionInfo extractFunctionInfo(String line) {
+        int callChainIndex = line.indexOf("CallChain:");
+        if (callChainIndex == -1) {
+            return null;
+        }
+
+        FunctionInfo info = new FunctionInfo();
+        String callChain = line.substring(callChainIndex + "CallChain:".length()).trim();
+
+        // Extract function name
+        int functionNameStart = line.indexOf("@") + 1;
+        int functionNameEnd = line.indexOf(" ", functionNameStart);
+        info.functionName = line.substring(functionNameStart, functionNameEnd);
+
+        // Extract context
+        info.context = extractContext(callChain);
+
+        // Create callee list
+        info.calleeList = new ArrayList<>();
+        info.calleeList.add(info.functionName);
+
+        return info;
+    }
+
+    private String extractContext(String callChain) {
+        return callChain.contains("->")
+                ? callChain.substring(0, callChain.lastIndexOf("->")).trim()
+                : callChain.trim();
+    }
+
+    private boolean shouldSkipNullFunction(FunctionInfo info, Map<String, CFG> allCFGs) {
+        if (!info.functionName.equals("***null***")) {
+            return false;
+        }
+
+        String lastFunction = getLastFunctionFromContext(info.context);
+        CFG cfg = allCFGs.get(lastFunction);
+        return cfg == null || !hasEdgeAnnotation(cfg);
+    }
+
+    private String getLastFunctionFromContext(String context) {
+        return context.contains("->")
+                ? context.substring(context.lastIndexOf("->") + 2)
+                : context;
+    }
+
+    private void debugPrintSignatures(List<Pair<String, List<String>>> functionSignatures) {
         System.out.println("\u001B[34m function signatures: \u001B[0m");
         for (Pair<String, List<String>> functionSignature : functionSignatures) {
             System.out.println(functionSignature.key + " " + functionSignature.value);
         }
-
-        return functionSignatures;
-    }
-
-    // 新增辅助方法：检查是否存在边的注释
-    private boolean hasEdgeAnnotation(CFG cfg) {
-        if (cfg.ENTRY == null || cfg.EXIT == null) {
-            return false;
-        }
-
-        // 检查 edgeAnnotations 中是否存在从入口到出口的边
-        Pair<Node, Node> edge = new Pair<>(cfg.ENTRY, cfg.EXIT);
-        List<String> annotations = cfg.edgeAnnotations.get(edge);
-        return annotations != null && !annotations.isEmpty();
     }
 
     private List<Pair<String, List<String>>> recoverPaths(
@@ -615,6 +628,18 @@ public class Recover {
             return new ArrayList<>();
         // 你可以用正则或更简单的 split
         return Arrays.asList(key.split("->"));
+    }
+
+    // 新增辅助方法：检查是否存在边的注释
+    private boolean hasEdgeAnnotation(CFG cfg) {
+        if (cfg.ENTRY == null || cfg.EXIT == null) {
+            return false;
+        }
+
+        // 检查 edgeAnnotations 中是否存在从入口到出口的边
+        Pair<Node, Node> edge = new Pair<>(cfg.ENTRY, cfg.EXIT);
+        List<String> annotations = cfg.edgeAnnotations.get(edge);
+        return annotations != null && !annotations.isEmpty();
     }
 
     // *********************************************************************
