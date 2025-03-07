@@ -306,12 +306,14 @@ std::set<node *> cfg::findMinimumPRS() {
 // V is a user-defined node set to be removed. Default is empty, if so will traverse on all nodes.
 void cfg::findMinimalPRS(std::set<node*> V) {
     set<node *> remove_V{};
-    std::map<node *, std::set<node *>> newOutEdges = outEdges;
-    std::map<node *, std::set<node *>> newInEdges = inEdges;
+    // 使用minimal_outEdges和minimal_inEdges代替outEdges和inEdges
+    std::map<node *, std::set<node *>> newOutEdges = minimal_outEdges.empty() ? outEdges : minimal_outEdges;
+    std::map<node *, std::set<node *>> newInEdges = minimal_inEdges.empty() ? inEdges : minimal_inEdges;
+
     if (V.empty()) {
         for (auto it = nodes.begin(); it != nodes.end(); it++) {
             // Directly add ENTRY and EXIT into removal set and EXCLUDE them when vertex traversal.
-            if (inEdges[it->second].size()==0 || outEdges[it->second].size()==0) {
+            if (newInEdges[it->second].size()==0 || newOutEdges[it->second].size()==0) {
                 remove_V.insert(it->second);
                 continue;
             }
@@ -320,7 +322,7 @@ void cfg::findMinimalPRS(std::set<node*> V) {
     } else {
         // User passes a vertex set V \subsetequal nodes to remove.
         for (auto v : V) {
-            if (inEdges[v].size()==0 || outEdges[v].size()==0) {
+            if (newInEdges[v].size()==0 || newOutEdges[v].size()==0) {
                 remove_V.insert(v);
             }
         }
@@ -486,8 +488,6 @@ set<node *> cfg::findMinimalNodes(PathRecoveryOrder order) {
     }
     return ret;
 }
-
-
 
 void cfg::storeCFGToFile(std::string cfg_function_name, node *ENTRY, node *EXIT, std::map<std::pair<node *, node *>, std::string> minimal_EdgeAnnotation, std::map<std::string, node *> nodes) {
     std::ofstream cfg_file("cfg.txt", std::ios::app);

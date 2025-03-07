@@ -98,7 +98,6 @@ namespace {
         // return true;
     }
 
-
     // Creating a Global variable for string 'str', and returning the pointer to the Global
     static inline GlobalVariable *getStringRef(Module *M, const std::string &str) {
         Constant *Init = ConstantDataArray::getString(M->getContext(), str);
@@ -363,6 +362,8 @@ namespace {
         bool useBufferStrings;
 
 	    std::map<std::string, int> methodsToMonitor;
+        std::set<std::string> allFunctionNames;
+
     public:
         static char ID; // Pass identification, replacement for typeid
 
@@ -438,10 +439,15 @@ namespace {
             errs().resetColor();
             errs().changeColor(raw_ostream::CYAN, true);
             errs() << "Available functions in module:\n";
+
+            // 收集所有函数名
+            allFunctionNames.clear();
             for (auto &F : M) {
                 if (!F.isDeclaration()) {  // only count functions with definitions
                     allFunctionNum++;
                     errs() << "  - " << F.getName() << "\n";
+                    // 将函数名添加到集合中
+                    allFunctionNames.insert(F.getName().str());
                 }
             }
             errs().resetColor();
@@ -502,6 +508,7 @@ namespace {
             errs().changeColor(raw_ostream::CYAN, true) << F->getName() << "\n";
             errs().resetColor();
             processFunction(*F);
+            // 只保存有 function的
             processed.insert(F);
 
             // process all called functions recursively
@@ -586,9 +593,11 @@ namespace {
                     string calleeName = callee->getName().str();
                     // Update call count (if needed for naming or statistics).
                     functionCallCount[calleeName] += 1;
-                    // You may append the call count if desired:
-                    // string callNode = calleeName + "_" + to_string(functionCallCount[calleeName]);
-                    nodeList.push_back(calleeName);
+
+                    // 只有当函数存在于allFunctionNames中才添加到节点列表
+                    if (allFunctionNames.find(calleeName) != allFunctionNames.end()) {
+                        nodeList.push_back(calleeName);
+                    }
                 }
                 }
             }
@@ -727,77 +736,130 @@ namespace {
             // Remove nodes with names beginning with "BasicBlock" and rewire edges.
             // ------------------------------------------------------------------
             map<string, node*> nodesCopy;
-            // Copy nodes that are not entry/exit nodes.
+            std::set<node*> nodesToKeep;
+
+            // 找出需要保留的节点：Entry, Exit和所有函数节点
             for (auto &kv : graph->nodes) {
-            node *n = kv.second;
-            if (graph->inEdges[n].empty() || graph->outEdges[n].empty())
-                continue;
-                nodesCopy.insert(kv);
+                node *n = kv.second;
+                const string &nodeName = kv.first;
+
+                // 检查是否为Entry节点（没有入边）
+                bool isEntry = graph->inEdges[n].empty();
+
+                // 检查是否为Exit节点（没有出边）
+                bool isExit = graph->outEdges[n].empty();
+
+                // 检查是否为函数节点（在allFunctionNames中）
+                bool isFunction = allFunctionNames.find(nodeName) != allFunctionNames.end();
+
+                // 只保留Entry, Exit和函数节点
+                if (isEntry || isExit || isFunction) {
+                    nodesCopy.insert(kv);
+                    nodesToKeep.insert(n);
+                }
             }
 
+            // 添加调试输出，显示正在保留的节点
+            errs().changeColor(raw_ostream::GREEN, true) << "保留的节点：\n";
             for (auto &kv : nodesCopy) {
-            const string &nodeName = kv.first;
-            node *n = kv.second;
-            if (nodeName.substr(0, 10) == "BasicBlock") {
+                errs().changeColor(raw_ostream::WHITE, true) << "  - " << kv.first << "\n";
+            }
+            errs().resetColor();
+
+            // 对于每个不保留的节点，重新连接其前驱和后继
+            set<node*> nodesToRemove;
+            for (auto &kv : graph->nodes) {
+                if (nodesToKeep.find(kv.second) == nodesToKeep.end()) {
+                    nodesToRemove.insert(kv.second);
+                }
+            }
+
+            for (node* n : nodesToRemove) {
                 set<pair<node*, node*>> newEdges;
-                // For every predecessor and successor of n, add an edge if not already present.
+                // 为n的每个前驱和后继添加直接边
                 for (node *src : graph->inEdges[n]) {
-                for (node *dst : graph->outEdges[n]) {
-                    if (graph->outEdges[src].find(dst) == graph->outEdges[src].end())
-                    newEdges.insert({src, dst});
-                }
+                    for (node *dst : graph->outEdges[n]) {
+                        // 如果直接边不存在，添加它
+                        if (graph->outEdges[src].find(dst) == graph->outEdges[src].end())
+                            newEdges.insert({src, dst});
+                    }
                 }
 
-                // Remove node n from the graph.
-                graph->nodes.erase(nodeName);
-
-                // Remove n from inEdges and outEdges of connected nodes.
+                // 从图中移除节点n的连接
                 auto inNodes = graph->inEdges[n];
+                auto outNodes = graph->outEdges[n];
+
+                // 清理边连接
                 graph->inEdges.erase(n);
                 for (node *src : inNodes) {
-                graph->outEdges[src].erase(n);
+                    graph->outEdges[src].erase(n);
                 }
-                auto outNodes = graph->outEdges[n];
+
                 graph->outEdges.erase(n);
                 for (node *dst : outNodes) {
-                graph->inEdges[dst].erase(n);
+                    graph->inEdges[dst].erase(n);
                 }
 
-                // Insert the new direct edges.
+                // 添加新的直接边
                 for (auto &edgePair : newEdges) {
-                node *src = edgePair.first;
-                node *dst = edgePair.second;
-                graph->inEdges[dst].insert(src);
-                graph->outEdges[src].insert(dst);
+                    node *src = edgePair.first;
+                    node *dst = edgePair.second;
+                    graph->inEdges[dst].insert(src);
+                    graph->outEdges[src].insert(dst);
                 }
+
+                // 从nodes中删除节点
+                graph->nodes.erase(n->name);
             }
-            }
+
+            // 保存并使用更新后的边结构
+            graph->minimal_outEdges = graph->outEdges;
+            graph->minimal_inEdges = graph->inEdges;
 
             // Write out the CFG after reduction to a DOT file.
-            graph->writeDotFile(funcName + "_after_reduce_bb.dot", graph->outEdges);
+            graph->writeDotFile(funcName + "_after_reduce_bb.dot", graph->minimal_outEdges);
 
             // Reset the graph's ENTRY and EXIT.
             graph->findENTRY();
             graph->findEXIT();
 
             // ------------------------------------------------------------------
-            // 6. Apply PRS on the function-level CFG.
+            // 6. Apply PRS on the updated function-level CFG
             // ------------------------------------------------------------------
             set<node*> fullNodes = graph->getFullNodes();
             unsigned funcBBNum = fullNodes.size();
 
-            // Optionally, you can choose a heuristic for the minimum PRS.
+            // 使用之前已设置的边结构找出最小PRS
+            // (我们在第5步结束时已经设置了graph->minimal_outEdges和graph->minimal_inEdges)
             graph->findMinimalPRS();
-            // graph->writeDotFile(funcName + "_after_reduce_func.dot", graph->minimal_PRS);
-
 
             // Update global statistics.
             BBNum += funcBBNum;
             minimalBBNum += graph->minimal_PRS.size();
 
+            // 创建一个新的边注释映射，只包含nodesCopy中的节点之间的边
+            std::map<std::pair<node*, node*>, std::string> filteredEdgeAnnotations;
+            for (auto &kv : graph->minimal_EdgeAnnotation) {
+                node *src = kv.first.first;
+                node *dst = kv.first.second;
+                // 只保留源节点和目标节点都在nodesCopy中的边
+                if (nodesCopy.find(src->name) != nodesCopy.end() &&
+                    nodesCopy.find(dst->name) != nodesCopy.end()) {
+                    filteredEdgeAnnotations[kv.first] = kv.second;
+                }
+            }
+
             // Store the final CFG to a file.
+            errs().changeColor(raw_ostream::CYAN, true) << "ENTRY: " << graph->ENTRY->name << "\n";
+            errs().changeColor(raw_ostream::CYAN, true) << "EXIT: " << graph->EXIT->name << "\n";
+            errs().changeColor(raw_ostream::CYAN, true) << "原始边注释数: " << graph->minimal_EdgeAnnotation.size() << "\n";
+            errs().changeColor(raw_ostream::CYAN, true) << "过滤后边注释数: " << filteredEdgeAnnotations.size() << "\n";
+            errs().changeColor(raw_ostream::CYAN, true) << "节点数: " << nodesCopy.size() << " (过滤前: " << graph->nodes.size() << ")\n";
+            errs().resetColor();
+
+            // 使用过滤后的节点和边注释
             graph->storeCFGToFile(funcName, graph->ENTRY, graph->EXIT,
-                                graph->minimal_EdgeAnnotation, graph->nodes);
+                                filteredEdgeAnnotations, nodesCopy);
 
             insertPRSNodes2Global(graph->minimal_PRS);
 

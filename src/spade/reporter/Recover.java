@@ -6,6 +6,12 @@ import java.util.stream.Collectors;
 
 public class Recover {
 
+    private String cfgFile;
+
+    public Recover(String cfgFile) {
+        this.cfgFile = cfgFile;
+    }
+
     // Generic Pair class
     public static class Pair<F, S> {
         public F key;
@@ -401,7 +407,7 @@ public class Recover {
 
     // recover the function name from the lines
     public List<String> recoverFunctions(List<String> lines) {
-        Map<String, CFG> allCFGs = parseCFGFile("cfg.txt");
+        Map<String, CFG> allCFGs = parseCFGFile(cfgFile);
         if (allCFGs.isEmpty()) {
             System.err.println("No CFG parsed or file error!");
         }
