@@ -161,44 +161,23 @@ class EventHandler implements Runnable {
             );
             LLVM.threadBufferReaders.add(inFromClient);
 
-            int adaptitive_pause_step = 10;
-            int adaptitive_pause = 10;
+            long lastLineTime = System.currentTimeMillis();
+            final long BATCH_TIMEOUT = 3000; // 2 seconds in milliseconds
 
-            while (!LLVM.shutdown || inFromClient.ready() ) {
+            while (!LLVM.shutdown || inFromClient.ready()) {
                 String line = inFromClient.readLine();
                 if (line != null) {
                     lines.add(line);
-                    // parseEvent(line);
+                    lastLineTime = System.currentTimeMillis();
                     System.out.println("\u001B[36m[LLVM] Collected line: " + line + "\u001B[0m");
-
-                    // 检查函数入口
-                    if (line.contains(" E: ")) {
-                        String funcName = extractFunctionName(line);
-                        System.out.println("\u001B[34m[LLVM] Function enter: " + funcName + "\u001B[0m");
-                        functionStack.push(funcName);
-                    }
-                    // 检查函数出口
-                    else if (line.contains(" L: ")) {
-                        if (!functionStack.isEmpty()) {
-                            String funcName = functionStack.pop();
-                            System.out.println("\u001B[34m[LLVM] Function exit: " + funcName + "\u001B[0m");
-
-                            // 如果栈为空，说明一个完整的调用序列结束了
-                            if (functionStack.isEmpty()) {
-                                System.out.println("\u001B[33m[LLVM] Complete function call sequence detected, processing batch...\u001B[0m \n\n");
-                                // recover lines
-
-                                processBatch();
-                            }
-                        }
-                    }
-
-                    adaptitive_pause=0;
                 } else {
-                    Thread.sleep(adaptitive_pause);
-                    if (adaptitive_pause < LLVM.THREAD_SLEEP_DELAY) {
-                        adaptitive_pause += adaptitive_pause_step;
+                    // Check if 10 seconds have passed since last line
+                    if (!lines.isEmpty() && System.currentTimeMillis() - lastLineTime > BATCH_TIMEOUT) {
+                        System.out.println("\u001B[33m[LLVM] No new data for 10 seconds, processing batch...\u001B[0m");
+                        processBatch();
+                        lastLineTime = System.currentTimeMillis();
                     }
+                    Thread.sleep(100); // Small sleep to prevent CPU spinning
                 }
             }
 
@@ -244,23 +223,24 @@ class EventHandler implements Runnable {
     }
 
     private void processBatch() {
-        lines = Recover.main(lines);
+        // todo: recover the function name from the lines
+        Recover.printLines(lines);
 
-        System.out.println("\u001B[32m[LLVM] Processing batch of " + lines.size() + " lines...\u001B[0m");
-        int processedCount = 0;
+        // System.out.println("\u001B[32m[LLVM] Processing batch of " + lines.size() + " lines...\u001B[0m");
+        // int processedCount = 0;
 
-        for (String line : lines) {
-            try {
-                parseEvent(line);
-                processedCount++;
-            } catch (Exception e) {
-                System.out.println("\u001B[31m[ERROR] Failed to parse line: " + line + "\u001B[0m");
-                e.printStackTrace();
-            }
-        }
+        // for (String line : lines) {
+        //     try {
+        //         parseEvent(line);
+        //         processedCount++;
+        //     } catch (Exception e) {
+        //         System.out.println("\u001B[31m[ERROR] Failed to parse line: " + line + "\u001B[0m");
+        //         e.printStackTrace();
+        //     }
+        // }
 
-        System.out.println("\u001B[32m[LLVM] Batch processing completed. Successfully processed: " +
-            processedCount + "/" + lines.size() + " lines\u001B[0m");
+        // System.out.println("\u001B[32m[LLVM] Batch processing completed. Successfully processed: " +
+        //     processedCount + "/" + lines.size() + " lines\u001B[0m");
 
         // // 清空已处理的数据
         lines.clear();

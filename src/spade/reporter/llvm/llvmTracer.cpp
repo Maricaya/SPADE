@@ -59,6 +59,12 @@ unsigned minimumBBNum = 0;
 unsigned allFunctionNum = 0;
 unsigned reducedFunctionNum = 0;
 
+extern "C" {
+    void pushCallStack(const char* funcName);
+    void popCallStack();
+    const char* getCallTrace();
+}
+
 namespace {
     // Value* GetTid; //the syscall argument for getting a Thread ID is different depending on the operating systems.
     std::set<std::string> globalMinimalPRSNodes;
@@ -467,14 +473,14 @@ namespace {
             }
 
             // print global statistics after all functions are processed
-            errs().changeColor(raw_ostream::YELLOW, true);
-            errs() << "\n=== Global Statistics ===\n";
-            errs() << "Total functions: " << allFunctionNum << "\n";
-            errs() << "Preserved functions: " << reducedFunctionNum << "\n";
-            errs() << "Removed functions: " << (allFunctionNum - reducedFunctionNum) << "\n";
-            errs() << "Reduction ratio: " << ((allFunctionNum - reducedFunctionNum) * 100.0 / allFunctionNum) << "%\n";
-            errs() << "======================\n\n";
-            errs().resetColor();
+            // errs().changeColor(raw_ostream::YELLOW, true);
+            // errs() << "\n=== Global Statistics ===\n";
+            // errs() << "Total functions: " << allFunctionNum << "\n";
+            // errs() << "Preserved functions: " << reducedFunctionNum << "\n";
+            // errs() << "Removed functions: " << (allFunctionNum - reducedFunctionNum) << "\n";
+            // errs() << "Reduction ratio: " << ((allFunctionNum - reducedFunctionNum) * 100.0 / allFunctionNum) << "%\n";
+            // errs() << "======================\n\n";
+            // errs().resetColor();
 
             errs().changeColor(raw_ostream::MAGENTA, true);
             errs() << "\n=== Module Analysis Complete ===\n\n";
@@ -639,6 +645,81 @@ namespace {
             }
 
             // Write out the preliminary (premature) CFG to a DOT file.
+
+            // 检查并修复孤立节点（没有入边的节点，除了第一个基本块）
+            node* entryNode = nullptr;
+            std::vector<node*> noInEdgesNodes;
+
+            // 找出所有没有入边的节点
+            for (auto& nodePair : graph->nodes) {
+                if (nodePair.first.find("BasicBlock_") == 0 &&
+                    graph->inEdges[nodePair.second].empty()) {
+                    if (nodePair.first.find("BasicBlock_0_") == 0) {
+                        entryNode = nodePair.second;
+                    } else {
+                        noInEdgesNodes.push_back(nodePair.second);
+                    }
+                }
+            }
+
+            // 如果找到了多个额外的入口节点，创建虚拟入口
+            if (entryNode && !noInEdgesNodes.empty()) {
+                std::cout << "Warning: Found " << noInEdgesNodes.size()
+                          << " additional entry points. Connecting them to the main entry." << std::endl;
+
+                // 连接所有孤立节点到主入口节点
+                for (node* isolatedNode : noInEdgesNodes) {
+                    std::cout << "Connecting: " << entryNode->name << " -> " << isolatedNode->name << std::endl;
+                    graph->outEdges[entryNode].insert(isolatedNode);
+                    graph->inEdges[isolatedNode].insert(entryNode);
+                }
+            } else if (!entryNode && !noInEdgesNodes.empty()) {
+                // 如果没有找到BasicBlock_0_Head，但有其他入口点
+                std::string virtualEntryName = "BasicBlock_virtual_Head";
+                node* virtualEntry = new node(virtualEntryName);
+                graph->nodes[virtualEntryName] = virtualEntry;
+
+                for (node* isolatedNode : noInEdgesNodes) {
+                    graph->outEdges[virtualEntry].insert(isolatedNode);
+                    graph->inEdges[isolatedNode].insert(virtualEntry);
+                }
+            }
+
+            // 确保只有一个出口点
+            std::vector<node*> noOutEdgesNodes;
+            node* exitNode = nullptr;
+
+            // 找出所有没有出边的节点
+            for (auto& nodePair : graph->nodes) {
+                if (graph->outEdges[nodePair.second].empty()) {
+                    if (!exitNode) {
+                        exitNode = nodePair.second;
+                    } else {
+                        noOutEdgesNodes.push_back(nodePair.second);
+                    }
+                }
+            }
+
+            // 如果找到了多个出口节点
+            if (exitNode && !noOutEdgesNodes.empty()) {
+                std::cout << "Warning: Found " << noOutEdgesNodes.size()
+                          << " additional exit points. Creating virtual exit node." << std::endl;
+
+                // 创建虚拟出口节点，使用BasicBlock_number_Tail格式
+                std::string virtualExitName = "BasicBlock_" + std::to_string(bbCount) + "_Tail";
+                node* virtualExit = new node(virtualExitName);
+                graph->nodes[virtualExitName] = virtualExit;
+
+                // 连接所有出口节点到虚拟出口
+                graph->outEdges[exitNode].insert(virtualExit);
+                graph->inEdges[virtualExit].insert(exitNode);
+
+                for (node* additionalExit : noOutEdgesNodes) {
+                    graph->outEdges[additionalExit].insert(virtualExit);
+                    graph->inEdges[virtualExit].insert(additionalExit);
+                }
+            }
+
             graph->writeDotFile(funcName + "_premature.dot", graph->outEdges);
 
             // ------------------------------------------------------------------
@@ -651,7 +732,7 @@ namespace {
             node *n = kv.second;
             if (graph->inEdges[n].empty() || graph->outEdges[n].empty())
                 continue;
-            nodesCopy.insert(kv);
+                nodesCopy.insert(kv);
             }
 
             for (auto &kv : nodesCopy) {
@@ -692,6 +773,9 @@ namespace {
             }
             }
 
+            // Write out the CFG after reduction to a DOT file.
+            graph->writeDotFile(funcName + "_after_reduce_bb.dot", graph->outEdges);
+
             // Reset the graph's ENTRY and EXIT.
             graph->findENTRY();
             graph->findEXIT();
@@ -704,6 +788,8 @@ namespace {
 
             // Optionally, you can choose a heuristic for the minimum PRS.
             graph->findMinimalPRS();
+            // graph->writeDotFile(funcName + "_after_reduce_func.dot", graph->minimal_PRS);
+
 
             // Update global statistics.
             BBNum += funcBBNum;
@@ -714,8 +800,6 @@ namespace {
                                 graph->minimal_EdgeAnnotation, graph->nodes);
 
             insertPRSNodes2Global(graph->minimal_PRS);
-
-
 
             delete graph;
         }

@@ -35,6 +35,9 @@ fi
 $LLC -relocation-model=pic ${LLVM_TARGET}.bc -o ${LLVM_TARGET}.s
 $CC -static ${REPLIB_OSFLAG} ${SRC_PATH}/spade/reporter/llvm/llvmBridge.c -c -o ${SRC_PATH}/spade/reporter/llvm/llvmBridge.o
 $CC -fPIC ${SRC_PATH}/spade/reporter/llvm/llvmClose.c -c -o ${SRC_PATH}/spade/reporter/llvm/llvmClose.o
+$CC -fPIC ${SRC_PATH}/spade/reporter/llvm/llvmReporterLib.c -c -o ${SRC_PATH}/spade/reporter/llvm/llvmReporterLib.o
 $CC ${LLVM_TARGET}.s -c -o ${LLVM_TARGET}.o
 $CC ${LLVM_TARGET}.o ${SRC_PATH}/spade/reporter/llvm/llvmClose.o -shared -o ${LLVM_TARGET}.so $LD_FLAGS
-$CC ${LLVM_TARGET}.so ${SRC_PATH}/spade/reporter/llvm/llvmBridge.o -o ${LLVM_TARGET} -Wl,-R -Wl,./ -lcrypt -lm
+$CC ${LLVM_TARGET}.so ${SRC_PATH}/spade/reporter/llvm/llvmBridge.o ${SRC_PATH}/spade/reporter/llvm/llvmReporterLib.o -o ${LLVM_TARGET} -Wl,-R -Wl,./ -lcrypt -lm
+
+# /usr/local/llvm-3.6/bin/llvm-dis cat_out.bc -o cat_out.ll

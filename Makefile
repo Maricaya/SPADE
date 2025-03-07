@@ -56,7 +56,7 @@ ifndef KERNEL_MODULES
 endif
 
 # -------- Default Build Configuration -----
-REPORTERS = Graphviz DSL Network LLVM Facebook Bitcoin StraceLinux JSON CDM CamFlow ProcMon
+REPORTERS = Graphviz DSL Network LLVM Facebook Bitcoin StraceLinux JSON CDM CamFlow ProcMon Recover
 # -------------------------------------------
 
 .PHONY: build prepare-dirs core reporters filters query analyzers clients utilities storages screens android-build
