@@ -147,11 +147,7 @@ public class Recover {
                 if (sig.equals("***null***")) {
                     List<String> annotation = edgeAnnotations.get(new Pair<>(ENTRY, EXIT));
                     // print entry and exit
-                    System.out.println("\u001B[31m ENTRY: \u001B[0m" + ENTRY.name);
-                    System.out.println("\u001B[31m EXIT: \u001B[0m" + EXIT.name);
                     if (annotation != null) {
-                        // print annotation green
-                        System.out.println("\u001B[32m annotation: \u001B[0m" + annotation);
                         path.addAll(annotation);
                     }
                     continue;
@@ -416,7 +412,7 @@ public class Recover {
 
     private List<String> processAndCombinePaths(List<String> lines, Map<String, CFG> allCFGs) {
         List<Pair<String, List<String>>> functionSignatures = extractFunctionSignatures(lines, allCFGs);
-        List<Pair<String, List<String>>> recoveredPaths = recoverPaths(functionSignatures, allCFGs);
+        List<Pair<List<String>, List<String>>> recoveredPaths = recoverPaths(functionSignatures, allCFGs);
         return combinePaths(recoveredPaths);
     }
 
@@ -501,16 +497,14 @@ public class Recover {
         }
     }
 
-    private List<Pair<String, List<String>>> recoverPaths(
+    private List<Pair<List<String>, List<String>>> recoverPaths(
             List<Pair<String, List<String>>> functionSignatures,
             Map<String, CFG> allCFGs) {
-        List<Pair<String, List<String>>> recoveredPaths = new ArrayList<>();
+        List<Pair<List<String>, List<String>>> recoveredPaths = new ArrayList<>();
 
         for (Pair<String, List<String>> functionSignature : functionSignatures) {
             String lastFunctionName = functionSignature.key.split("->")[functionSignature.key.split("->").length - 1];
 
-            // print recoveredPath
-            System.out.println("\u001B[33m recoveredPath before : \u001B[0m" + lastFunctionName);
             List<String> recoveredPath = allCFGs.get(lastFunctionName)
                     .recoverPath(functionSignature.value)
                     .stream()
@@ -519,180 +513,13 @@ public class Recover {
             // color yellow
             System.out.println("\u001B[33m recoveredPath after: \u001B[0m" + recoveredPath);
 
-            // print contain keys
-            // System.out.println("\u001B[33m contain keys: \u001B[0m" + allCFGs.keySet());
+            List<String> keys = Arrays.asList(functionSignature.key.split("->"));
 
-            // System.out.println("\u001B[33m functionSignature: \u001B[0m" +
-            // functionSignature.first + " " + functionSignature.second);
-
-            recoveredPaths.add(new Pair<>(functionSignature.key, recoveredPath));
+            recoveredPaths.add(new Pair<>(keys, recoveredPath));
         }
 
         return recoveredPaths;
     }
-
-    private boolean canMerge(Pair<String, List<String>> p1,
-            Pair<String, List<String>> p2) {
-        // 解析 p1 的 key，如 "main->print_even" → ["main", "print_even"]
-        List<String> p1KeyList = splitKey(p1.key);
-
-        // p1KeyList 的最后一个函数
-        if (p1KeyList.isEmpty())
-            return false;
-        String lastFunc = p1KeyList.get(p1KeyList.size() - 1);
-
-        // 如果 p2 的 recoveredPath 中包含 lastFunc，则满足合并条件
-        return p2.value.contains(lastFunc);
-    }
-
-    private Pair<String, List<String>> doMerge(
-            Pair<String, List<String>> p1,
-            Pair<String, List<String>> p2) {
-        // 解析 p1.key，找出最后一个函数
-        List<String> p1KeyList = splitKey(p1.key);
-        String lastFunc = p1KeyList.get(p1KeyList.size() - 1);
-
-        // 在 p2.value 中找到 lastFunc 的位置
-        List<String> p2Path = new ArrayList<>(p2.value);
-        int idx = p2Path.indexOf(lastFunc);
-        if (idx < 0) {
-            // 理论上不会出现，因为 canMerge 保证了包含
-            return p2;
-        }
-
-        // 把 p1.value 中的剩余部分插入到 p2Path 中 lastFunc 之后
-        // 例如 p1.value = ["print_even", "add"], lastFunc = "print_even"
-        // p2.value = ["main", "print_even", "empty"]
-        // 那么要把 "add" 插到 "print_even" 之后
-        List<String> p1Path = p1.value;
-        // 找到 p1Path 中 lastFunc 的位置
-        int posInP1 = p1Path.indexOf(lastFunc);
-        // 若 posInP1 >= 0，则 posInP1 之后的所有函数都插入 p2
-        if (posInP1 >= 0 && posInP1 + 1 < p1Path.size()) {
-            // 需要插入的部分
-            List<String> leftover = p1Path.subList(posInP1 + 1, p1Path.size());
-            // 在 idx+1 位置插入 leftover
-            p2Path.addAll(idx + 1, leftover);
-        }
-
-        // 合并后用 p2 的 key 作为新的 key（通常更外层）
-        return new Pair<>(p2.key, p2Path);
-    }
-
-        /**
-     * 根据映射 key 的深度（如 "main->print_even" 深度为 2）先合并更深的映射，再合并更浅的映射。
-     * 最终返回合并后的一条完整 trace。
-     */
-    private List<String> combinePathsDeeperFirst(List<Pair<String, List<String>>> recoveredPaths) {
-        for (Pair<String, List<String>> p : recoveredPaths) {
-            System.out.println("\u001B[32m p: \u001B[0m" + p.key + " " + p.value);
-        }
-        // 1. 将映射按 key 的深度分组并降序排列
-        //    深度 = splitKey(key).size()
-        Map<Integer, List<Pair<String, List<String>>>> depthMap = new TreeMap<>(Collections.reverseOrder());
-        for (Pair<String, List<String>> p : recoveredPaths) {
-            int depth = splitKey(p.key).size();
-            depthMap.computeIfAbsent(depth, k -> new ArrayList<>()).add(p);
-        }
-
-        // 合并结果容器
-        List<Pair<String, List<String>>> mergedAll = new ArrayList<>();
-
-        // 2. 依次处理从大到小的深度
-        for (Map.Entry<Integer, List<Pair<String, List<String>>>> entry : depthMap.entrySet()) {
-            int currentDepth = entry.getKey();
-            List<Pair<String, List<String>>> sameDepthList = entry.getValue();
-
-            // 将同一深度的映射按原始顺序插入到 mergedAll 中，以便和相邻映射尝试合并
-            // 也可以根据需要，把它们先插入到 mergedAll 的“合适位置”。
-            mergedAll.addAll(sameDepthList);
-
-            // 不断尝试在 mergedAll 中合并“相邻”且可合并的映射
-            boolean changed = true;
-            while (changed) {
-                changed = false;
-                for (int i = 0; i < mergedAll.size() - 1; i++) {
-                    Pair<String, List<String>> p1 = mergedAll.get(i);
-                    Pair<String, List<String>> p2 = mergedAll.get(i + 1);
-
-                    if (canMerge(p1, p2)) {
-                        // doMerge, 用 p2 替换
-                        Pair<String, List<String>> newPair = doMerge(p1, p2);
-                        mergedAll.set(i + 1, newPair);
-                        mergedAll.remove(i);
-                        changed = true;
-                        break;
-                    }
-                    // 如果也可能 p2 合并进 p1，就加一个分支:
-                    else if (canMerge(p2, p1)) {
-                        Pair<String, List<String>> newPair = doMerge(p2, p1);
-                        mergedAll.set(i, newPair);
-                        mergedAll.remove(i + 1);
-                        changed = true;
-                        break;
-                    }
-                }
-            }
-        }
-
-        // 3. 现在 mergedAll 中包含了所有深度映射合并后的列表，但顺序不一定完美。
-        //    可能还可以做一次“相邻合并”，以确保剩余的相邻映射也能互相合并。
-        //    这里可以与原先的 combinePaths 的逻辑类似：
-        boolean merged = true;
-        while (merged && mergedAll.size() > 1) {
-            merged = false;
-            for (int i = 0; i < mergedAll.size() - 1; i++) {
-                Pair<String, List<String>> p1 = mergedAll.get(i);
-                Pair<String, List<String>> p2 = mergedAll.get(i + 1);
-                if (canMerge(p1, p2)) {
-                    Pair<String, List<String>> mergedPair = doMerge(p1, p2);
-                    mergedAll.set(i + 1, mergedPair);
-                    mergedAll.remove(i);
-                    merged = true;
-                    break;
-                }
-                else if (canMerge(p2, p1)) {
-                    Pair<String, List<String>> mergedPair = doMerge(p2, p1);
-                    mergedAll.set(i, mergedPair);
-                    mergedAll.remove(i + 1);
-                    merged = true;
-                    break;
-                }
-            }
-        }
-
-        // 4. 最后将 mergedAll 中的所有 recoveredPath 顺序拼接
-        List<String> combinedLog = new ArrayList<>();
-        for (Pair<String, List<String>> p : mergedAll) {
-            combinedLog.addAll(p.value);
-        }
-        combinedLog = removeAdjacentDuplicates(combinedLog);
-
-        System.out.println("\u001B[35m[DeeperFirst] Combined path:\u001B[0m " + combinedLog);
-        return combinedLog;
-    }
-
-    /**
- * 如果segment中有多个token，并且segment的首token已经在combinedChain中出现，
- * 则移除segment的首token；重复该过程直到segment只剩下一个token或首token不在combinedChain中。
- * 如果经过移除后segment为空，则返回原segment的最后一个token（以保留至少一个信息）。
- */
-private List<String> trimSegment(List<String> segment, List<String> combinedChain) {
-    if (segment == null || segment.isEmpty()) {
-        return segment;
-    }
-    // 保留原始拷贝以便在必要时还原
-    List<String> original = new ArrayList<>(segment);
-    while (segment.size() > 1 && combinedChain.contains(segment.get(0))) {
-        // 移除第一个token
-        segment.remove(0);
-    }
-    if (segment.isEmpty() && !original.isEmpty()) {
-        // 如果全部移除导致空，则至少返回最后一个token
-        segment.add(original.get(original.size() - 1));
-    }
-    return segment;
-}
 
 /**
  * 合并多个映射恢复的调用链。
@@ -717,9 +544,11 @@ private List<String> trimSegment(List<String> segment, List<String> combinedChai
  * 直到只剩下一个 token或首 token不再重复。
  * 如果映射 key 包含 "->"（深层映射），则不做裁剪。
  */
-private List<String> trimSegment(List<String> segment, String key, List<String> combinedChain) {
-    List<String> keyTokens = splitString(key, "->");
-    if (keyTokens.size() > 1) {
+private List<String> trimSegment(List<String> segment, List<String> key, List<String> combinedChain) {
+    System.out.println("\u001B[33mtrimSegment: segment: " + segment + "\u001B[0m\n");
+    System.out.println("\u001B[33m trimSegment: key: " + key + "\u001B[0m\n");
+    System.out.println("\u001B[33m trimSegment: combinedChain: " + combinedChain + "\u001B[0m\n");
+    if (key.size() > 1) {
         // 深层映射：不裁剪，直接返回
         return segment;
     }
@@ -734,13 +563,39 @@ private List<String> trimSegment(List<String> segment, String key, List<String> 
     return segment;
 }
 
-private List<String> combinePaths(List<Pair<String, List<String>>> recoveredPaths) {
+private List<String> combinePaths(List<Pair<List<String>, List<String>>> recoveredPaths) {
     List<List<String>> segments = new ArrayList<>();
+    // print yellow
+    System.out.println("\u001B[32m recoveredPaths: " + recoveredPaths + "\u001B[0m\n");
     // 把每个映射的 recovered path 拷贝一份作为独立段
-    for (Pair<String, List<String>> p : recoveredPaths) {
+    for (Pair<List<String>, List<String>> p : recoveredPaths) {
+        // p.key 也要被放进 seg 里， 放进的规则是
+        // 如果 p.key 的第一个 token 已经在 segments 中，则不放进
+        // 否则，放进
+
         List<String> seg = new ArrayList<>(p.value);
+
+        // 检查p.key的第一个元素是否已在segments中的任何列表中
+        boolean firstTokenExists = false;
+        if (!p.key.isEmpty()) {
+            String firstToken = p.key.get(0);
+            for (List<String> existingSeg : segments) {
+                if (!existingSeg.isEmpty() && existingSeg.contains(firstToken)) {
+                    firstTokenExists = true;
+                    break;
+                }
+            }
+
+            // 如果第一个token不存在于segments中，则将p.key添加到seg
+            if (!firstTokenExists) {
+                seg.addAll(0, p.key); // 在seg开头添加p.key
+            }
+        }
+
         segments.add(seg);
     }
+
+    System.out.println("\u001B[33m segments: " + segments + "\u001B[0m\n");
 
     // 初始化组合链为第一个映射的 recovered path（去除相邻重复）
     List<String> combined = new ArrayList<>();
@@ -750,99 +605,49 @@ private List<String> combinePaths(List<Pair<String, List<String>>> recoveredPath
 
     // 对后续映射依次处理：
     // 如果映射 key 为浅层（即 key 中不包含 "->"），则对该段进行裁剪；
-    // 否则直接追加。
+    // 但对于特殊函数如 close_stdout，保留不裁剪
     for (int i = 1; i < segments.size(); i++) {
-        Pair<String, List<String>> p = recoveredPaths.get(i);
+        Pair<List<String>, List<String>> p = recoveredPaths.get(i);
         List<String> seg = new ArrayList<>(segments.get(i));
-        List<String> keyTokens = splitString(p.key, "->");
-        if (keyTokens.size() == 1) {
-            seg = trimSegment(seg, p.key, combined);
-        }
+        List<String> keyTokens = p.key;
+
+        seg = trimSegment(seg, keyTokens, combined);
         combined.addAll(seg);
     }
 
+    System.out.println("\u001B[33m combined: " + combined + "\u001B[0m\n");
+
     combined = removeAdjacentDuplicates(combined);
-    System.out.println("Combined call stack: " + combined);
+    // color green
+    System.out.println("\u001B[32m Combined call stack: \u001B[0m" + combined);
     return combined;
 }
 
-/**
- * 将字符串按照 delimiter 分割为 token 列表
- */
-private static List<String> splitString(String s, String delimiter) {
-    List<String> tokens = new ArrayList<>();
-    int start = 0, end;
-    while ((end = s.indexOf(delimiter, start)) != -1) {
-        tokens.add(s.substring(start, end));
-        start = end + delimiter.length();
-    }
-    tokens.add(s.substring(start));
-    return tokens;
-}
-
-/**
- * 去除列表中相邻重复的 token
- */
-private List<String> removeAdjacentDuplicates(List<String> input) {
-    List<String> result = new ArrayList<>();
-    for (String s : input) {
-        if (result.isEmpty() || !result.get(result.size() - 1).equals(s)) {
-            result.add(s);
+    /**
+     * 将字符串按照 delimiter 分割为 token 列表
+     */
+    private static List<String> splitString(String s, String delimiter) {
+        List<String> tokens = new ArrayList<>();
+        int start = 0, end;
+        while ((end = s.indexOf(delimiter, start)) != -1) {
+            tokens.add(s.substring(start, end));
+            start = end + delimiter.length();
         }
+        tokens.add(s.substring(start));
+        return tokens;
     }
-    return result;
-}
 
-
-
-    // private List<String> combinePaths(List<Pair<String, List<String>>> recoveredPaths) {
-        // 打印 recoveredPaths
-        // for (Pair<String, List<String>> p : recoveredPaths) {
-            // System.out.println("\u001B[32m p: \u001B[0m" + p.key + " " + p.value);
-        // }
-
-        // 反复尝试合并，直到无法再合并
-        // boolean merged = true;
-        // while (merged) {
-            // merged = false;
-            // for (int i = 0; i < recoveredPaths.size() - 1; i++) {
-                // Pair<String, List<String>> p1 = recoveredPaths.get(i);
-                // Pair<String, List<String>> p2 = recoveredPaths.get(i + 1);
-
-                // if (canMerge(p1, p2)) {
-                    // 执行合并
-                    // Pair<String, List<String>> mergedPair = doMerge(p1, p2);
-                    // 用合并结果替换 p2
-                    // recoveredPaths.set(i + 1, mergedPair);
-                    // 移除 p1
-                    // recoveredPaths.remove(i);
-                    // merged = true;
-                    // break; // 重新开始扫描
-                // }
-            // }
-        // }
-
-        // 经过上面多轮合并后，recoveredPaths 中的若干映射可能已经合并成更大粒度
-        // 最后可以把所有剩余映射都拼接起来（或根据需要处理）
-        // List<String> combinedLog = new ArrayList<>();
-        // for (Pair<String, List<String>> p : recoveredPaths) {
-            // combinedLog.addAll(p.value);
-        // }
-
-        // 可选：去除相邻重复
-        // combinedLog = removeAdjacentDuplicates(combinedLog);
-
-        // 输出调试
-        // System.out.println("Combined path (preserving order): " + combinedLog);
-        // return combinedLog;
-    // }
-
-    // 工具函数：解析 key，如 "main->print_even" → ["main", "print_even"]
-    private List<String> splitKey(String key) {
-        if (key == null || key.isEmpty())
-            return new ArrayList<>();
-        // 你可以用正则或更简单的 split
-        return Arrays.asList(key.split("->"));
+    /**
+     * 去除列表中相邻重复的 token
+     */
+    private List<String> removeAdjacentDuplicates(List<String> input) {
+        List<String> result = new ArrayList<>();
+        for (String s : input) {
+            if (result.isEmpty() || !result.get(result.size() - 1).equals(s)) {
+                result.add(s);
+            }
+        }
+        return result;
     }
 
     // 新增辅助方法：检查是否存在边的注释
@@ -865,11 +670,5 @@ private List<String> removeAdjacentDuplicates(List<String> input) {
     public static void main(String[] args) {
         // Recover recover = new Recover();
         // recover.recoverFunctions(lines);
-    }
-
-    public static void printLines(List<String> lines) {
-        for (String line : lines) {
-            System.out.println(line);
-        }
     }
 }
